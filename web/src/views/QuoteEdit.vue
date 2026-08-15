@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import QuoteSheet from '../components/QuoteSheet.vue'
@@ -28,6 +28,11 @@ const quoteId = computed(() => {
 
 const loading = ref(false)
 const saving = ref(false)
+const autoSaveReady = ref(false)
+const autoSaveStatus = ref<'idle' | 'pending' | 'saving' | 'saved' | 'error'>('idle')
+const lastSavedAt = ref('')
+let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
+let persistLock = false
 const templates = ref<QuoteTemplate[]>([])
 const activeTemplate = ref<QuoteTemplate | null>(null)
 const previewRef = ref<HTMLElement | null>(null)
@@ -337,43 +342,109 @@ async function loadQuote() {
   }
 }
 
-async function onSave() {
-  if (!form.items.length) {
-    ElMessage.warning('请至少添加一行明细')
-    return
-  }
-  saving.value = true
-  try {
-    const saved = await saveQuote(
-      {
-        title: form.title,
-        status: form.status,
-        customerId: form.customerId,
-        customerName: form.customerName,
-        contactName: form.contactName,
-        contactPhone: form.contactPhone,
-        currency: form.currency,
-        validUntil: form.validUntil || null,
-        remark: form.remark,
-        discountAmt: form.discountAmt,
-        shippingAmt: form.shippingAmt,
-        taxAmt: form.taxAmt,
-        templateId: form.templateId,
-        items: form.items.map((it, i) => ({ ...it, sort: (i + 1) * 10 })),
-      },
-      quoteId.value || undefined,
-    )
-    ElMessage.success('已保存')
-    form.quoteNo = saved.quoteNo
-    if (!quoteId.value) {
-      router.replace(`/quotes/${saved.id}`)
-    }
-  } catch (e) {
-    ElMessage.error((e as Error).message)
-  } finally {
-    saving.value = false
+function canPersistItems(): boolean {
+  if (!form.items.length) return false
+  return form.items.every(
+    (it) =>
+      !!(it.name || '').trim() || !!(it.category || '').trim() || !!(it.partName || '').trim(),
+  )
+}
+
+function buildSavePayload() {
+  return {
+    title: form.title,
+    status: form.status,
+    customerId: form.customerId,
+    customerName: form.customerName,
+    contactName: form.contactName,
+    contactPhone: form.contactPhone,
+    currency: form.currency,
+    validUntil: form.validUntil || null,
+    remark: form.remark,
+    discountAmt: form.discountAmt,
+    shippingAmt: form.shippingAmt,
+    taxAmt: form.taxAmt,
+    templateId: form.templateId,
+    items: form.items.map((it, i) => ({ ...it, sort: (i + 1) * 10 })),
   }
 }
+
+async function onSave(silent = false) {
+  if (autoSaveTimer) {
+    clearTimeout(autoSaveTimer)
+    autoSaveTimer = null
+  }
+  if (!form.items.length) {
+    if (!silent) ElMessage.warning('请至少添加一行明细')
+    return
+  }
+  if (!canPersistItems()) {
+    if (!silent) ElMessage.warning('每行明细需填写名称或配件')
+    return
+  }
+  if (persistLock || saving.value) {
+    if (silent) {
+      // 正在保存时再排队一次
+      scheduleAutoSave()
+    }
+    return
+  }
+  persistLock = true
+  saving.value = true
+  if (silent) autoSaveStatus.value = 'saving'
+  try {
+    const wasNew = !quoteId.value
+    const saved = await saveQuote(buildSavePayload(), quoteId.value || undefined)
+    form.quoteNo = saved.quoteNo
+    autoSaveStatus.value = 'saved'
+    lastSavedAt.value = new Date().toLocaleTimeString()
+    if (!silent) ElMessage.success('已保存')
+    if (wasNew) {
+      autoSaveReady.value = false
+      await router.replace(`/quotes/${saved.id}`)
+      // 路由切换后组件会重建；若同页不重建则重新打开自动保存
+      await nextTick()
+      autoSaveReady.value = true
+    }
+  } catch (e) {
+    autoSaveStatus.value = 'error'
+    ElMessage.error(silent ? `自动保存失败：${(e as Error).message}` : (e as Error).message)
+  } finally {
+    saving.value = false
+    persistLock = false
+  }
+}
+
+function scheduleAutoSave() {
+  if (!autoSaveReady.value || loading.value) return
+  if (!canPersistItems()) {
+    autoSaveStatus.value = 'idle'
+    return
+  }
+  autoSaveStatus.value = 'pending'
+  if (autoSaveTimer) clearTimeout(autoSaveTimer)
+  autoSaveTimer = setTimeout(() => {
+    autoSaveTimer = null
+    void onSave(true)
+  }, 1600)
+}
+
+const autoSaveHint = computed(() => {
+  if (autoSaveStatus.value === 'pending') return '待自动保存…'
+  if (autoSaveStatus.value === 'saving') return '自动保存中…'
+  if (autoSaveStatus.value === 'saved') return lastSavedAt.value ? `已自动保存 ${lastSavedAt.value}` : '已自动保存'
+  if (autoSaveStatus.value === 'error') return '自动保存失败'
+  return ''
+})
+
+watch(
+  () => form,
+  () => {
+    if (!autoSaveReady.value || loading.value) return
+    scheduleAutoSave()
+  },
+  { deep: true },
+)
 
 async function searchSku() {
   if (!skuKeyword.value.trim()) return
@@ -487,12 +558,26 @@ async function doDownloadPdf() {
 }
 
 onMounted(async () => {
+  autoSaveReady.value = false
   try {
     await loadTemplates()
   } catch (e) {
     ElMessage.error((e as Error).message)
   }
   await loadQuote()
+  await nextTick()
+  // 等初始赋值完成后再开启自动保存，避免一进页就触发
+  setTimeout(() => {
+    autoSaveReady.value = true
+  }, 400)
+})
+
+onBeforeUnmount(() => {
+  autoSaveReady.value = false
+  if (autoSaveTimer) {
+    clearTimeout(autoSaveTimer)
+    autoSaveTimer = null
+  }
 })
 </script>
 
@@ -502,13 +587,14 @@ onMounted(async () => {
       <div class="left">
         <el-button @click="router.push('/quotes')">返回</el-button>
         <strong>{{ quoteId ? `编辑 ${form.quoteNo}` : '新建报价' }}</strong>
+        <span v-if="autoSaveHint" class="autosave-hint" :class="autoSaveStatus">{{ autoSaveHint }}</span>
       </div>
       <div class="right">
         <el-button :loading="exporting" @click="showPreview = true">预览</el-button>
         <el-button :loading="exporting" @click="doCopyImage">复制图片</el-button>
         <el-button :loading="exporting" @click="doDownloadPng">下载 PNG</el-button>
         <el-button :loading="exporting" @click="doDownloadPdf">下载 PDF</el-button>
-        <el-button type="primary" :loading="saving" @click="onSave">保存</el-button>
+        <el-button type="primary" :loading="saving" @click="onSave(false)">保存</el-button>
       </div>
     </div>
 
@@ -719,6 +805,10 @@ onMounted(async () => {
 <style scoped>
 .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 12px; flex-wrap: wrap; }
 .topbar .left, .topbar .right { display: flex; gap: 8px; align-items: center; }
+.autosave-hint { color: #909399; font-size: 12px; font-weight: 400; margin-left: 4px; }
+.autosave-hint.saving, .autosave-hint.pending { color: #e6a23c; }
+.autosave-hint.saved { color: #67c23a; }
+.autosave-hint.error { color: #f56c6c; }
 .block { margin-bottom: 12px; }
 .card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
 .card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
