@@ -15,7 +15,7 @@ import {
   type QuoteTemplate,
   type SkuHit,
 } from '../api/quote'
-import { copyElementAsImage, downloadElementAsPdf } from '../utils/exportQuote'
+import { copyElementAsImage, downloadElementAsPdf, prepareExportElement } from '../utils/exportQuote'
 
 const route = useRoute()
 const router = useRouter()
@@ -294,24 +294,32 @@ function pickSku(s: SkuHit) {
 }
 
 async function doCopyImage() {
-  showPreview.value = true
-  await new Promise((r) => setTimeout(r, 80))
-  const el = previewRef.value
-  if (!el) return
   try {
-    await copyElementAsImage(el)
-    ElMessage.success('已复制到剪贴板（若不支持则已下载 PNG）')
+    const el = await prepareExportElement(
+      () => previewRef.value,
+      () => {
+        showPreview.value = true
+      },
+    )
+    const mode = await copyElementAsImage(el)
+    if (mode === 'clipboard') {
+      ElMessage.success('已复制图片到剪贴板，可直接粘贴')
+    } else {
+      ElMessage.success('当前环境不支持剪贴板图片，已改为下载 PNG')
+    }
   } catch (e) {
     ElMessage.error((e as Error).message || '复制失败')
   }
 }
 
 async function doDownloadPdf() {
-  showPreview.value = true
-  await new Promise((r) => setTimeout(r, 80))
-  const el = previewRef.value
-  if (!el) return
   try {
+    const el = await prepareExportElement(
+      () => previewRef.value,
+      () => {
+        showPreview.value = true
+      },
+    )
     await downloadElementAsPdf(el, form.quoteNo || `quote-${Date.now()}`)
     ElMessage.success('PDF 已下载')
   } catch (e) {

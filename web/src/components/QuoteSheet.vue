@@ -40,7 +40,7 @@ function isProductHead(idx: number): boolean {
   <div class="sheet">
     <header class="head">
       <div class="brand">
-        <img v-if="template?.showLogo !== false && template?.logoUrl" :src="template.logoUrl" class="logo" alt="logo" />
+        <img v-if="template?.showLogo !== false && template?.logoUrl" :src="template.logoUrl" class="logo" alt="logo" crossorigin="anonymous" />
         <div>
           <div class="shop">{{ template?.shopName || '报价中心' }}</div>
           <div class="sub">{{ template?.headerSubtitle || '' }}</div>
@@ -75,10 +75,14 @@ function isProductHead(idx: number): boolean {
         </tr>
       </thead>
       <tbody>
-        <tr v-for="(it, idx) in quote.items" :key="idx">
+        <tr
+          v-for="(it, idx) in quote.items"
+          :key="idx"
+          :class="{ 'spec-row': !isProductHead(idx), 'product-head': isProductHead(idx) }"
+        >
           <td>{{ idx + 1 }}</td>
           <td v-if="template?.showSpecImage !== false">
-            <img v-if="it.imageUrl" :src="it.imageUrl" class="thumb" alt="" />
+            <img v-if="it.imageUrl" :src="it.imageUrl" class="thumb" alt="" crossorigin="anonymous" />
           </td>
           <td>
             <template v-if="isProductHead(idx)">
@@ -88,12 +92,15 @@ function isProductHead(idx: number): boolean {
               <div v-if="it.remark" class="muted">备注：{{ it.remark }}</div>
             </template>
             <template v-else>
+              <div class="spec-cont">└ 同产品规格</div>
               <div v-if="template?.showUpgrade !== false && it.upgradeNote" class="muted">升级：{{ it.upgradeNote }}</div>
               <div v-if="template?.showParams !== false && it.paramsText" class="muted">参数：{{ it.paramsText }}</div>
               <div v-if="it.remark" class="muted">备注：{{ it.remark }}</div>
             </template>
           </td>
-          <td>{{ it.specLabel || '—' }}</td>
+          <td>
+            <span class="spec-label">{{ it.specLabel || '—' }}</span>
+          </td>
           <td>{{ it.qty }}{{ it.unit }}</td>
           <td v-if="template?.showRetailPrice !== false">{{ money(it.retailPrice) }}</td>
           <td>{{ money(it.quotePrice) }}</td>
@@ -143,6 +150,9 @@ function isProductHead(idx: number): boolean {
 .items th { background: #f5f6f7; text-align: left; }
 .thumb { width: 40px; height: 40px; max-width: 40px; max-height: 40px; object-fit: cover; border-radius: 4px; display: block; }
 .name { font-weight: 600; }
+.spec-cont { color: #8f959e; font-size: 11px; }
+.spec-row td { background: #fafbfc; }
+.spec-row .spec-label { font-weight: 600; }
 .muted { color: #8f959e; font-size: 11px; margin-top: 2px; }
 .empty { text-align: center; color: #8f959e; padding: 24px !important; }
 .totals { margin-top: 14px; text-align: right; }
