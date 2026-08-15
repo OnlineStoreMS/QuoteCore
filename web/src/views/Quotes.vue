@@ -1,14 +1,29 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { copyQuote, deleteQuote, listQuotes, voidQuote, type Quote } from '../api/quote'
+import {
+  copyQuote,
+  deleteQuote,
+  isSkeletonTemplate,
+  listQuotes,
+  listTemplates,
+  voidQuote,
+  type Quote,
+  type QuoteTemplate,
+} from '../api/quote'
 
 const router = useRouter()
+const route = useRoute()
 const loading = ref(false)
 const list = ref<Quote[]>([])
 const total = ref(0)
 const query = reactive({ keyword: '', status: '' as string | number | '', page: 1, pageSize: 20 })
+
+const bizDialog = ref(false)
+const bizLoading = ref(false)
+const bizTemplates = ref<QuoteTemplate[]>([])
+const selectedBizId = ref<number | null>(null)
 
 const statusMap: Record<number, { label: string; type: '' | 'info' | 'success' | 'warning' | 'danger' }> = {
   1: { label: '草稿', type: 'info' },
@@ -33,6 +48,32 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+async function openBizCreate() {
+  bizDialog.value = true
+  bizLoading.value = true
+  selectedBizId.value = null
+  try {
+    const all = await listTemplates()
+    bizTemplates.value = all.filter((t) => isSkeletonTemplate(t))
+    if (bizTemplates.value.length === 1) {
+      selectedBizId.value = bizTemplates.value[0].id
+    }
+  } catch (e) {
+    ElMessage.error((e as Error).message)
+  } finally {
+    bizLoading.value = false
+  }
+}
+
+function confirmBizCreate() {
+  if (!selectedBizId.value) {
+    ElMessage.warning('请选择业务模板')
+    return
+  }
+  bizDialog.value = false
+  router.push({ path: '/quotes/new', query: { bizTemplateId: String(selectedBizId.value) } })
 }
 
 async function onCopy(row: Quote) {
@@ -67,7 +108,13 @@ async function onDelete(row: Quote) {
   }
 }
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  if (route.query.fromBiz === '1') {
+    await openBizCreate()
+    router.replace({ path: '/quotes' })
+  }
+})
 </script>
 
 <template>
@@ -82,6 +129,7 @@ onMounted(load)
       </el-select>
       <el-button type="primary" @click="query.page=1; load()">查询</el-button>
       <el-button type="success" @click="router.push('/quotes/new')">新建报价</el-button>
+      <el-button type="warning" plain @click="openBizCreate">从业务模板创建</el-button>
     </div>
 
     <el-table v-loading="loading" :data="list" border stripe>
@@ -117,10 +165,40 @@ onMounted(load)
         @current-change="load"
       />
     </div>
+
+    <el-dialog v-model="bizDialog" title="从业务模板创建报价" width="480px" destroy-on-close>
+      <div v-loading="bizLoading">
+        <p class="biz-hint">选择业务模板后，将带入产品/配件固定行，再填写名称、规格与价格。</p>
+        <el-empty v-if="!bizLoading && !bizTemplates.length" description="暂无业务模板，请先到「业务模板」创建" />
+        <el-radio-group v-else v-model="selectedBizId" class="biz-list">
+          <el-radio
+            v-for="t in bizTemplates"
+            :key="t.id"
+            :value="t.id"
+            border
+            class="biz-item"
+          >
+            <div class="biz-item-body">
+              <strong>{{ t.name }}</strong>
+              <span>{{ t.lines?.length || 0 }} 行明细</span>
+            </div>
+          </el-radio>
+        </el-radio-group>
+      </div>
+      <template #footer>
+        <el-button @click="bizDialog = false">取消</el-button>
+        <el-button type="primary" :disabled="!selectedBizId" @click="confirmBizCreate">创建并填写</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <style scoped>
 .toolbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
 .pager { margin-top: 12px; display: flex; justify-content: flex-end; }
+.biz-hint { margin: 0 0 12px; color: #909399; font-size: 13px; }
+.biz-list { display: flex; flex-direction: column; gap: 8px; width: 100%; align-items: stretch; }
+.biz-item { width: 100%; height: auto; margin: 0 !important; padding: 10px 12px; }
+.biz-item-body { display: flex; flex-direction: column; gap: 2px; text-align: left; }
+.biz-item-body span { color: #909399; font-size: 12px; font-weight: 400; }
 </style>

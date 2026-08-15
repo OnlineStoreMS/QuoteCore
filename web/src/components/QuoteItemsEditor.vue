@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { FullScreen } from '@element-plus/icons-vue'
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 import type { QuoteItem } from '../api/quote'
 import { isQuoteStoredUrl, uploadImage, uploadImageFromUrl } from '../api/upload'
 import { ElMessage } from 'element-plus'
@@ -52,7 +52,19 @@ function isCategoryHead(idx: number): boolean {
   return !sameCategory(cur, prev)
 }
 
-const lockedFromTemplate = computed(() => props.skeleton)
+/** 当前行所属产品组的 [首行, 末行] */
+function findGroupRange(idx: number): [number, number] {
+  let head = idx
+  while (head > 0 && !isCategoryHead(head)) head -= 1
+  const cat = (props.items[head]?.category || '').trim()
+  let end = head
+  if (!cat) return [head, head]
+  for (let i = head + 1; i < props.items.length; i++) {
+    if ((props.items[i].category || '').trim() === cat) end = i
+    else break
+  }
+  return [head, end]
+}
 
 function renumberSort() {
   props.items.forEach((it, i) => {
@@ -102,6 +114,48 @@ function addSpecRow(idx: number) {
   renumberSort()
 }
 
+/** 在当前产品组末尾追加一行配件 */
+function addPartRow(idx: number) {
+  if (!props.items[idx]) return
+  const [head, end] = findGroupRange(idx)
+  const cat = props.items[head]?.category || ''
+  props.items.splice(
+    end + 1,
+    0,
+    emptyItem({
+      source: 'template',
+      category: cat,
+      partName: '',
+      name: '',
+    }),
+  )
+  renumberSort()
+}
+
+/** 在当前产品组后面新建一个产品组（首行，可填产品组名+名称+配件） */
+function addProductGroup(idx: number) {
+  const [, end] = findGroupRange(idx)
+  props.items.splice(
+    end + 1,
+    0,
+    emptyItem({
+      source: 'manual',
+      category: '',
+      partName: '',
+      name: '',
+    }),
+  )
+  renumberSort()
+}
+
+function onCategoryInput(idx: number, val: string) {
+  if (!isCategoryHead(idx)) return
+  const [head, end] = findGroupRange(idx)
+  for (let i = head; i <= end; i++) {
+    props.items[i].category = val
+  }
+}
+
 function onProductNameInput(idx: number, val: string) {
   const old = props.items[idx].name
   props.items[idx].name = val
@@ -109,10 +163,7 @@ function onProductNameInput(idx: number, val: string) {
   for (let i = idx + 1; i < props.items.length; i++) {
     const it = props.items[i]
     if (props.skeleton) {
-      if (sameCategory(head, it)) {
-        // 组内后续行不强制同步名称（Excel 只在组首填名称）
-        continue
-      }
+      if (sameCategory(head, it)) continue
       break
     }
     if (head.productId && it.productId && Number(it.productId) === Number(head.productId)) {
@@ -202,13 +253,18 @@ function openImage(url?: string) {
     </div>
     <el-table :data="items" border :size="large ? 'default' : 'small'" row-key="sort" class="items-table">
       <template v-if="skeleton">
-        <el-table-column label="产品" :width="large ? 110 : 96">
+        <el-table-column label="产品（组）" :width="large ? 120 : 100">
           <template #default="{ row, $index }">
-            <span v-if="isCategoryHead($index)" class="fixed-cell">{{ row.category || '—' }}</span>
+            <el-input
+              v-if="isCategoryHead($index)"
+              :model-value="row.category"
+              placeholder="如 车架组"
+              @update:model-value="(v: string) => onCategoryInput($index, v)"
+            />
             <span v-else class="muted-cell" />
           </template>
         </el-table-column>
-        <el-table-column label="名称" :min-width="large ? 200 : 150">
+        <el-table-column label="名称" :min-width="large ? 180 : 140">
           <template #default="{ row, $index }">
             <el-input
               v-if="isCategoryHead($index)"
@@ -219,9 +275,9 @@ function openImage(url?: string) {
             <span v-else class="muted-cell" />
           </template>
         </el-table-column>
-        <el-table-column label="配件" :width="large ? 120 : 100">
+        <el-table-column label="配件" :width="large ? 130 : 110">
           <template #default="{ row }">
-            <span class="fixed-cell">{{ row.partName || '—' }}</span>
+            <el-input v-model="row.partName" placeholder="配件" />
           </template>
         </el-table-column>
       </template>
@@ -315,9 +371,13 @@ function openImage(url?: string) {
       <el-table-column label="备注" :min-width="large ? 160 : 120">
         <template #default="{ row }"><el-input v-model="row.remark" type="textarea" :rows="large ? 2 : 1" /></template>
       </el-table-column>
-      <el-table-column label="操作" :width="large ? 200 : 168" fixed="right">
+      <el-table-column label="操作" :width="large ? (skeleton ? 260 : 200) : skeleton ? 220 : 168" fixed="right">
         <template #default="{ $index }">
-          <el-button v-if="!lockedFromTemplate" link type="primary" @click="addSpecRow($index)">加规格</el-button>
+          <template v-if="skeleton">
+            <el-button link type="primary" @click="addPartRow($index)">加配件</el-button>
+            <el-button v-if="isCategoryHead($index)" link type="warning" @click="addProductGroup($index)">加产品</el-button>
+          </template>
+          <el-button v-else link type="primary" @click="addSpecRow($index)">加规格</el-button>
           <el-button link @click="moveRow($index, -1)">上</el-button>
           <el-button link @click="moveRow($index, 1)">下</el-button>
           <el-button link type="danger" @click="removeRow($index)">删</el-button>

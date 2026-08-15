@@ -1,7 +1,7 @@
 <script setup lang="ts">
+import { CollectionTag, Document, Grid, HomeFilled, Ticket } from '@element-plus/icons-vue'
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { HomeFilled, Document, Ticket } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -9,15 +9,13 @@ const collapsed = defineModel<boolean>('collapsed', { default: false })
 
 const activeMenu = computed(() => {
   if (route.path.startsWith('/quotes')) return '/quotes'
-  if (route.path.startsWith('/templates')) return '/templates'
+  if (route.path.startsWith('/templates/layout')) return '/templates/layout'
+  if (route.path.startsWith('/templates/business')) return '/templates/business'
+  if (route.path.startsWith('/templates')) return '/templates/layout'
   return route.path
 })
 
-const menuItems = [
-  { path: '/dashboard', title: '工作台', icon: HomeFilled },
-  { path: '/quotes', title: '报价单', icon: Document },
-  { path: '/templates', title: '报价模板', icon: Ticket },
-]
+const openMenus = computed(() => (route.path.startsWith('/templates') ? ['templates'] : []))
 
 const logoText = computed(() => (collapsed.value ? 'QC' : '报价中心'))
 
@@ -31,20 +29,34 @@ function navigate(path: string) {
     <div class="logo">{{ logoText }}</div>
     <el-menu
       :default-active="activeMenu"
+      :default-openeds="openMenus"
       :collapse="collapsed"
       background-color="#001529"
       text-color="#ffffffa6"
       active-text-color="#fff"
     >
-      <el-menu-item
-        v-for="item in menuItems"
-        :key="item.path"
-        :index="item.path"
-        @click="navigate(item.path)"
-      >
-        <el-icon><component :is="item.icon" /></el-icon>
-        <span>{{ item.title }}</span>
+      <el-menu-item index="/dashboard" @click="navigate('/dashboard')">
+        <el-icon><HomeFilled /></el-icon>
+        <span>工作台</span>
       </el-menu-item>
+      <el-menu-item index="/quotes" @click="navigate('/quotes')">
+        <el-icon><Document /></el-icon>
+        <span>报价单</span>
+      </el-menu-item>
+      <el-sub-menu index="templates">
+        <template #title>
+          <el-icon><Ticket /></el-icon>
+          <span>报价模板</span>
+        </template>
+        <el-menu-item index="/templates/layout" @click="navigate('/templates/layout')">
+          <el-icon><Grid /></el-icon>
+          <span>版式模板</span>
+        </el-menu-item>
+        <el-menu-item index="/templates/business" @click="navigate('/templates/business')">
+          <el-icon><CollectionTag /></el-icon>
+          <span>业务模板</span>
+        </el-menu-item>
+      </el-sub-menu>
     </el-menu>
   </aside>
 </template>

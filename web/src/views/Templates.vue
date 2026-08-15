@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ASSEMBLE_SKELETON_PRESET,
   deleteTemplate,
+  isSkeletonTemplate,
   listTemplates,
   saveTemplate,
   type QuoteTemplate,
@@ -11,8 +13,20 @@ import {
 } from '../api/quote'
 import { uploadImage, uploadImageFromUrl, isQuoteStoredUrl } from '../api/upload'
 
+const route = useRoute()
+const router = useRouter()
+const pageKind = computed<'layout' | 'skeleton'>(() =>
+  route.meta.templateKind === 'skeleton' ? 'skeleton' : 'layout',
+)
+const isBizPage = computed(() => pageKind.value === 'skeleton')
+const pageTitle = computed(() => (isBizPage.value ? '业务模板' : '版式模板'))
+
+function createFromBiz(row: QuoteTemplate) {
+  router.push({ path: '/quotes/new', query: { bizTemplateId: String(row.id) } })
+}
+
 const loading = ref(false)
-const list = ref<QuoteTemplate[]>([])
+const allList = ref<QuoteTemplate[]>([])
 const dialog = ref(false)
 const editingId = ref<number | undefined>()
 const form = reactive({
@@ -35,12 +49,17 @@ const form = reactive({
   lines: [] as QuoteTemplateLine[],
 })
 
-const isSkeleton = computed(() => form.kind === 'skeleton')
+const list = computed(() =>
+  allList.value.filter((t) => {
+    const sk = isSkeletonTemplate(t)
+    return isBizPage.value ? sk : !sk
+  }),
+)
 
 async function load() {
   loading.value = true
   try {
-    list.value = await listTemplates()
+    allList.value = await listTemplates()
   } catch (e) {
     ElMessage.error((e as Error).message)
   } finally {
@@ -50,20 +69,20 @@ async function load() {
 
 function resetForm(partial?: Partial<typeof form>) {
   Object.assign(form, {
-    name: '新模板',
-    kind: 'layout',
+    name: isBizPage.value ? '新业务模板' : '新版式模板',
+    kind: pageKind.value,
     isDefault: false,
     logoUrl: '',
     shopName: '',
     shopPhone: '',
     shopAddress: '',
-    headerSubtitle: '',
+    headerSubtitle: isBizPage.value ? '组车配件清单' : '',
     footerText: '本报价单有效期内价格有效。',
     showLogo: true,
     showRetailPrice: true,
     showSpecImage: true,
-    showUpgrade: true,
-    showParams: true,
+    showUpgrade: !isBizPage.value,
+    showParams: !isBizPage.value,
     showTotals: true,
     stylePreset: 'compare',
     lines: [] as QuoteTemplateLine[],
@@ -73,21 +92,17 @@ function resetForm(partial?: Partial<typeof form>) {
 
 function openCreate() {
   editingId.value = undefined
-  resetForm()
-  logoLinkDraft.value = ''
-  dialog.value = true
-}
-
-function openCreateSkeleton() {
-  editingId.value = undefined
-  resetForm({
-    name: '组装车报价骨架',
-    kind: 'skeleton',
-    headerSubtitle: '组车配件清单',
-    showUpgrade: false,
-    showParams: false,
-    lines: ASSEMBLE_SKELETON_PRESET.map((x) => ({ ...x })),
-  })
+  if (isBizPage.value) {
+    resetForm({
+      name: '组装车业务模板',
+      kind: 'skeleton',
+      showUpgrade: false,
+      showParams: false,
+      lines: ASSEMBLE_SKELETON_PRESET.map((x) => ({ ...x })),
+    })
+  } else {
+    resetForm({ kind: 'layout' })
+  }
   logoLinkDraft.value = ''
   dialog.value = true
 }
@@ -96,7 +111,7 @@ function openEdit(row: QuoteTemplate) {
   editingId.value = row.id
   resetForm({
     name: row.name,
-    kind: row.kind === 'skeleton' || (row.lines && row.lines.length) ? 'skeleton' : 'layout',
+    kind: pageKind.value,
     isDefault: row.isDefault,
     logoUrl: row.logoUrl || '',
     shopName: row.shopName || '',
@@ -162,13 +177,77 @@ async function applyLogoLink() {
   }
 }
 
-function addLine() {
-  form.lines.push({
-    sort: (form.lines.length + 1) * 10,
-    category: form.lines.length ? form.lines[form.lines.length - 1].category : '',
+function addPartLine(idx: number) {
+  const head = idx
+  let start = head
+  while (start > 0 && (form.lines[start].category || '') === (form.lines[start - 1].category || '') && (form.lines[start].category || '').trim()) {
+    start -= 1
+  }
+  // find end of group containing idx
+  const cat = (form.lines[idx]?.category || '').trim()
+  let end = idx
+  if (cat) {
+    for (let i = idx + 1; i < form.lines.length; i++) {
+      if ((form.lines[i].category || '').trim() === cat) end = i
+      else break
+    }
+  }
+  form.lines.splice(end + 1, 0, {
+    sort: 0,
+    category: cat || form.lines[idx]?.category || '',
     partName: '',
     hint: '',
   })
+  form.lines.forEach((ln, i) => {
+    ln.sort = (i + 1) * 10
+  })
+}
+
+function addProductGroupLine(idx?: number) {
+  const at =
+    typeof idx === 'number'
+      ? (() => {
+          const cat = (form.lines[idx]?.category || '').trim()
+          let end = idx
+          if (cat) {
+            for (let i = idx + 1; i < form.lines.length; i++) {
+              if ((form.lines[i].category || '').trim() === cat) end = i
+              else break
+            }
+          }
+          return end + 1
+        })()
+      : form.lines.length
+  form.lines.splice(at, 0, {
+    sort: 0,
+    category: '',
+    partName: '',
+    hint: '',
+  })
+  form.lines.forEach((ln, i) => {
+    ln.sort = (i + 1) * 10
+  })
+}
+
+function isLineCategoryHead(idx: number): boolean {
+  if (idx <= 0) return true
+  const cur = (form.lines[idx].category || '').trim()
+  if (!cur) return true
+  return cur !== (form.lines[idx - 1].category || '').trim()
+}
+
+function onLineCategoryInput(idx: number, val: string) {
+  if (!isLineCategoryHead(idx)) return
+  const old = form.lines[idx].category || ''
+  const catOld = old.trim()
+  let end = idx
+  if (catOld) {
+    for (let i = idx + 1; i < form.lines.length; i++) {
+      if ((form.lines[i].category || '').trim() === catOld) end = i
+      else break
+    }
+  }
+  for (let i = idx; i <= end; i++) form.lines[i].category = val
 }
 
 function removeLine(idx: number) {
@@ -181,10 +260,11 @@ function removeLine(idx: number) {
 function loadPreset() {
   form.kind = 'skeleton'
   form.lines = ASSEMBLE_SKELETON_PRESET.map((x) => ({ ...x }))
-  ElMessage.success('已载入组装车预设（精灵表结构）')
+  ElMessage.success('已载入组装车预设')
 }
 
 async function onSave() {
+  form.kind = pageKind.value
   if (form.kind === 'skeleton') {
     const bad = form.lines.findIndex((ln) => !(ln.partName || '').trim())
     if (bad >= 0) {
@@ -192,18 +272,32 @@ async function onSave() {
       return
     }
     if (!form.lines.length) {
-      ElMessage.warning('骨架模板至少需要一行配件')
+      ElMessage.warning('业务模板至少需要一行配件')
       return
     }
   }
   try {
-    await saveTemplate(
-      {
-        ...form,
-        lines: form.kind === 'skeleton' ? form.lines : [],
-      },
-      editingId.value,
-    )
+    const payload =
+      pageKind.value === 'skeleton'
+        ? {
+            name: form.name,
+            kind: 'skeleton' as const,
+            isDefault: false,
+            lines: form.lines,
+            showLogo: true,
+            showRetailPrice: true,
+            showSpecImage: true,
+            showUpgrade: false,
+            showParams: false,
+            showTotals: true,
+            stylePreset: 'compare',
+          }
+        : {
+            ...form,
+            kind: 'layout' as const,
+            lines: [],
+          }
+    await saveTemplate(payload, editingId.value)
     ElMessage.success('已保存')
     dialog.value = false
     load()
@@ -223,95 +317,125 @@ async function onDelete(row: QuoteTemplate) {
   }
 }
 
+watch(
+  () => route.path,
+  () => {
+    dialog.value = false
+  },
+)
+
 onMounted(load)
 </script>
 
 <template>
   <div>
     <div class="toolbar">
-      <el-button type="primary" @click="openCreate">新建版式模板</el-button>
-      <el-button @click="openCreateSkeleton">新建组装车骨架</el-button>
-      <span class="hint">版式管 Logo/店名；骨架固定「产品+配件」行，报价时只填名称/规格/价格/图片。</span>
+      <el-button type="primary" @click="openCreate">
+        {{ isBizPage ? '新建业务模板' : '新建版式模板' }}
+      </el-button>
+      <span class="hint">
+        <template v-if="isBizPage">
+          只设计产品组 / 配件明细骨架；报价单外观统一由「版式模板」控制。
+        </template>
+        <template v-else>
+          统一配置 Logo、店名、页脚与显示项，对所有报价单生效。
+        </template>
+      </span>
     </div>
 
     <el-table v-loading="loading" :data="list" border>
-      <el-table-column prop="name" label="名称" min-width="140" />
-      <el-table-column label="类型" width="110">
-        <template #default="{ row }">
-          <el-tag v-if="row.kind === 'skeleton' || (row.lines && row.lines.length)" type="warning" size="small">骨架</el-tag>
-          <el-tag v-else size="small">版式</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="骨架行" width="80">
+      <el-table-column prop="name" label="名称" min-width="160" />
+      <el-table-column v-if="isBizPage" label="明细行" width="90">
         <template #default="{ row }">{{ row.lines?.length || 0 }}</template>
       </el-table-column>
-      <el-table-column label="默认" width="80">
+      <el-table-column v-if="!isBizPage" label="默认" width="80">
         <template #default="{ row }">
           <el-tag v-if="row.isDefault" type="success" size="small">默认</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="shopName" label="店名" width="140" />
-      <el-table-column prop="shopPhone" label="电话" width="120" />
-      <el-table-column label="操作" width="160">
+      <el-table-column v-if="!isBizPage" prop="shopName" label="店名" width="140" />
+      <el-table-column v-if="!isBizPage" prop="shopPhone" label="电话" width="120" />
+      <el-table-column v-if="!isBizPage" label="样式" width="100">
+        <template #default="{ row }">{{ row.stylePreset === 'simple' ? '简洁' : '对比价' }}</template>
+      </el-table-column>
+      <el-table-column label="操作" :width="isBizPage ? 220 : 160">
         <template #default="{ row }">
+          <el-button v-if="isBizPage" link type="warning" @click="createFromBiz(row)">用此创建报价</el-button>
           <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
           <el-button link type="danger" @click="onDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="dialog" :title="editingId ? '编辑模板' : '新建模板'" width="820px" destroy-on-close>
+    <el-dialog
+      v-model="dialog"
+      :title="editingId ? `编辑${pageTitle}` : `新建${pageTitle}`"
+      :width="isBizPage ? '780px' : '640px'"
+      destroy-on-close
+    >
       <el-form label-width="100px">
         <el-form-item label="名称"><el-input v-model="form.name" /></el-form-item>
-        <el-form-item label="类型">
-          <el-radio-group v-model="form.kind">
-            <el-radio-button value="layout">版式</el-radio-button>
-            <el-radio-button value="skeleton">组车骨架</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item label="默认模板"><el-switch v-model="form.isDefault" /></el-form-item>
-        <el-form-item label="样式">
-          <el-radio-group v-model="form.stylePreset">
-            <el-radio-button value="compare">对比价</el-radio-button>
-            <el-radio-button value="simple">简洁</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item label="Logo">
-          <div class="logo-row">
-            <el-image v-if="form.logoUrl" :src="form.logoUrl" style="width: 64px; height: 64px" fit="contain" />
-            <el-upload :show-file-list="false" :http-request="onUpload as any" accept="image/*">
-              <el-button>上传</el-button>
-            </el-upload>
-          </div>
-          <div class="logo-link">
-            <el-input v-model="logoLinkDraft" clearable placeholder="粘贴 Logo 图片链接，将上传到报价中心" />
-            <el-button type="primary" :loading="logoUploading" @click="applyLogoLink">上传到报价中心</el-button>
-          </div>
-        </el-form-item>
-        <el-form-item label="店名"><el-input v-model="form.shopName" /></el-form-item>
-        <el-form-item label="电话"><el-input v-model="form.shopPhone" /></el-form-item>
-        <el-form-item label="地址"><el-input v-model="form.shopAddress" /></el-form-item>
-        <el-form-item label="副标题"><el-input v-model="form.headerSubtitle" /></el-form-item>
-        <el-form-item label="页脚条款"><el-input v-model="form.footerText" type="textarea" :rows="3" /></el-form-item>
-        <el-form-item label="显示项">
-          <el-checkbox v-model="form.showLogo">Logo</el-checkbox>
-          <el-checkbox v-model="form.showRetailPrice">零售价</el-checkbox>
-          <el-checkbox v-model="form.showSpecImage">规格图</el-checkbox>
-          <el-checkbox v-model="form.showUpgrade">升级款</el-checkbox>
-          <el-checkbox v-model="form.showParams">参数</el-checkbox>
-          <el-checkbox v-model="form.showTotals">合计</el-checkbox>
-        </el-form-item>
 
-        <template v-if="isSkeleton">
-          <el-form-item label="骨架明细">
+        <template v-if="!isBizPage">
+          <el-form-item label="默认版式"><el-switch v-model="form.isDefault" /></el-form-item>
+          <el-form-item label="样式">
+            <el-radio-group v-model="form.stylePreset">
+              <el-radio-button value="compare">对比价</el-radio-button>
+              <el-radio-button value="simple">简洁</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="Logo">
+            <div class="logo-row">
+              <el-image v-if="form.logoUrl" :src="form.logoUrl" style="width: 64px; height: 64px" fit="contain" />
+              <el-upload :show-file-list="false" :http-request="onUpload as any" accept="image/*">
+                <el-button>上传</el-button>
+              </el-upload>
+            </div>
+            <div class="logo-link">
+              <el-input v-model="logoLinkDraft" clearable placeholder="粘贴 Logo 图片链接，将上传到报价中心" />
+              <el-button type="primary" :loading="logoUploading" @click="applyLogoLink">上传到报价中心</el-button>
+            </div>
+          </el-form-item>
+          <el-form-item label="店名"><el-input v-model="form.shopName" /></el-form-item>
+          <el-form-item label="电话"><el-input v-model="form.shopPhone" /></el-form-item>
+          <el-form-item label="地址"><el-input v-model="form.shopAddress" /></el-form-item>
+          <el-form-item label="副标题"><el-input v-model="form.headerSubtitle" /></el-form-item>
+          <el-form-item label="页脚条款"><el-input v-model="form.footerText" type="textarea" :rows="3" /></el-form-item>
+          <el-form-item label="显示项">
+            <el-checkbox v-model="form.showLogo">Logo</el-checkbox>
+            <el-checkbox v-model="form.showRetailPrice">零售价</el-checkbox>
+            <el-checkbox v-model="form.showSpecImage">规格图</el-checkbox>
+            <el-checkbox v-model="form.showUpgrade">升级款</el-checkbox>
+            <el-checkbox v-model="form.showParams">参数</el-checkbox>
+            <el-checkbox v-model="form.showTotals">合计</el-checkbox>
+          </el-form-item>
+        </template>
+
+        <template v-else>
+          <el-form-item label="业务明细">
             <div class="lines-toolbar">
-              <el-button size="small" @click="addLine">加一行</el-button>
+              <el-button size="small" type="primary" plain @click="addProductGroupLine()">加产品组</el-button>
+              <el-button
+                size="small"
+                :disabled="!form.lines.length"
+                @click="addPartLine(form.lines.length - 1)"
+              >
+                加配件（末组）
+              </el-button>
               <el-button size="small" type="primary" plain @click="loadPreset">载入组装车预设</el-button>
-              <span class="hint">产品=组名（可空）；配件=固定列。报价时只填名称/规格/价/图/备注。</span>
+              <span class="hint">加配件插到当前产品组末尾；加产品组在组后新建。</span>
             </div>
             <el-table :data="form.lines" border size="small" class="lines-table">
               <el-table-column label="产品（组）" min-width="120">
-                <template #default="{ row }"><el-input v-model="row.category" placeholder="如 车架组" /></template>
+                <template #default="{ row, $index }">
+                  <el-input
+                    v-if="isLineCategoryHead($index)"
+                    :model-value="row.category"
+                    placeholder="如 车架组"
+                    @update:model-value="(v: string) => onLineCategoryInput($index, v)"
+                  />
+                  <span v-else class="line-muted" />
+                </template>
               </el-table-column>
               <el-table-column label="配件" min-width="140">
                 <template #default="{ row }"><el-input v-model="row.partName" placeholder="如 车架" /></template>
@@ -319,8 +443,10 @@ onMounted(load)
               <el-table-column label="填写提示" min-width="140">
                 <template #default="{ row }"><el-input v-model="row.hint" placeholder="可选" /></template>
               </el-table-column>
-              <el-table-column label="操作" width="70">
+              <el-table-column label="操作" width="160">
                 <template #default="{ $index }">
+                  <el-button link type="primary" @click="addPartLine($index)">加配件</el-button>
+                  <el-button v-if="isLineCategoryHead($index)" link type="warning" @click="addProductGroupLine($index)">加产品</el-button>
                   <el-button link type="danger" @click="removeLine($index)">删</el-button>
                 </template>
               </el-table-column>
@@ -344,4 +470,5 @@ onMounted(load)
 .logo-link .el-input { flex: 1; }
 .lines-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; width: 100%; }
 .lines-table { width: 100%; }
+.line-muted { display: inline-block; min-height: 20px; color: #c0c4cc; }
 </style>

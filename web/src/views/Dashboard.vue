@@ -49,15 +49,25 @@ onMounted(load)
         <h3>新建报价单</h3>
         <p>选客户、选商品或手填</p>
       </el-card>
+      <el-card shadow="hover" class="action-card" @click="router.push({ path: '/quotes', query: { fromBiz: '1' } })">
+        <el-icon :size="32" color="#e6a23c"><Document /></el-icon>
+        <h3>从业务模板创建</h3>
+        <p>组车固定行，再填规格价格</p>
+      </el-card>
       <el-card shadow="hover" class="action-card" @click="router.push('/quotes')">
         <el-icon :size="32" color="#67c23a"><Document /></el-icon>
         <h3>报价单列表</h3>
         <p>查询、复制、作废</p>
       </el-card>
-      <el-card shadow="hover" class="action-card" @click="router.push('/templates')">
+      <el-card shadow="hover" class="action-card" @click="router.push('/templates/layout')">
         <el-icon :size="32" color="#e6a23c"><Ticket /></el-icon>
-        <h3>报价模板</h3>
+        <h3>版式模板</h3>
         <p>Logo、店名与显示项</p>
+      </el-card>
+      <el-card shadow="hover" class="action-card" @click="router.push('/templates/business')">
+        <el-icon :size="32" color="#f56c6c"><Ticket /></el-icon>
+        <h3>业务模板</h3>
+        <p>组车产品/配件骨架</p>
       </el-card>
     </div>
   </div>

@@ -140,7 +140,11 @@ func (s *QuoteService) SaveTemplate(tenantID, id uint64, req dto.TemplateSaveReq
 	}
 	item.Name = name
 	item.Kind = kind
-	item.IsDefault = req.IsDefault
+	if kind == model.TemplateKindSkeleton {
+		item.IsDefault = false
+	} else {
+		item.IsDefault = req.IsDefault
+	}
 	item.LogoURL = strings.TrimSpace(req.LogoURL)
 	item.ShopName = strings.TrimSpace(req.ShopName)
 	item.ShopPhone = strings.TrimSpace(req.ShopPhone)

@@ -33,10 +33,45 @@ const activeTemplate = ref<QuoteTemplate | null>(null)
 const previewRef = ref<HTMLElement | null>(null)
 const exportRef = ref<HTMLElement | null>(null)
 const showPreview = ref(false)
+const previewShowRetailPrice = ref(true)
 const imagePreviewUrl = ref('')
 const showImagePreview = ref(false)
 const itemsZoomed = ref(false)
 const exporting = ref(false)
+
+/** 预览/导出用的版式（可临时关闭零售价等） */
+const sheetTemplate = computed<QuoteTemplate | null>(() => {
+  const base = activeTemplate.value
+  if (!base) {
+    return {
+      id: 0,
+      name: '',
+      isDefault: false,
+      logoUrl: '',
+      shopName: '报价中心',
+      shopPhone: '',
+      shopAddress: '',
+      headerSubtitle: '',
+      footerText: '',
+      showLogo: true,
+      showRetailPrice: previewShowRetailPrice.value,
+      showSpecImage: true,
+      showUpgrade: true,
+      showParams: true,
+      showTotals: true,
+      stylePreset: 'compare',
+    }
+  }
+  return { ...base, showRetailPrice: previewShowRetailPrice.value }
+})
+
+watch(
+  activeTemplate,
+  (t) => {
+    previewShowRetailPrice.value = t?.showRetailPrice !== false
+  },
+  { immediate: true },
+)
 
 function openImagePreview(url?: string) {
   const u = (url || '').trim()
@@ -122,7 +157,29 @@ const previewQuote = computed(() => ({
   items: form.items,
 }))
 
-const skeletonMode = computed(() => isSkeletonTemplate(activeTemplate.value))
+const selectedBizId = ref<number | null>(null)
+
+const skeletonMode = computed(() => {
+  if (selectedBizId.value) return true
+  return form.items.some((it) => !!(it.partName || '').trim() || !!(it.category || '').trim())
+})
+
+const layoutTemplates = computed(() => templates.value.filter((t) => !isSkeletonTemplate(t)))
+const bizTemplates = computed(() => templates.value.filter((t) => isSkeletonTemplate(t)))
+
+function pickDefaultLayout(): QuoteTemplate | null {
+  return layoutTemplates.value.find((t) => t.isDefault) || layoutTemplates.value[0] || null
+}
+
+function useLayoutTemplate(tpl: QuoteTemplate | null) {
+  if (!tpl) {
+    activeTemplate.value = null
+    form.templateId = null
+    return
+  }
+  form.templateId = tpl.id
+  activeTemplate.value = tpl
+}
 
 function itemsAreBlank(): boolean {
   if (!form.items.length) return true
@@ -138,22 +195,28 @@ function itemsAreBlank(): boolean {
 }
 
 async function applySkeleton(force = false) {
-  const tpl = activeTemplate.value
+  const tpl = selectedBizId.value
+    ? bizTemplates.value.find((t) => t.id === selectedBizId.value)
+    : undefined
   if (!tpl || !isSkeletonTemplate(tpl)) {
-    ElMessage.warning('当前模板没有骨架明细')
+    ElMessage.warning('请先选择业务模板')
     return
   }
   if (!force && !itemsAreBlank()) {
     try {
-      await ElMessageBox.confirm('将用模板骨架覆盖当前明细，未保存内容会丢失。继续？', '套用骨架', {
+      await ElMessageBox.confirm('将用业务模板覆盖当前明细，未保存内容会丢失。继续？', '套用业务模板', {
         type: 'warning',
       })
     } catch {
       return
     }
   }
+  selectedBizId.value = tpl.id
   form.items = seedItemsFromTemplate(tpl)
-  ElMessage.success(`已套用骨架（${form.items.length} 行）`)
+  if (!form.templateId || isSkeletonTemplate(activeTemplate.value)) {
+    useLayoutTemplate(pickDefaultLayout())
+  }
+  ElMessage.success(`已套用业务模板（${form.items.length} 行）`)
 }
 
 function findLastSameProductIndex(productId?: number | null, name?: string): number {
@@ -178,29 +241,38 @@ function addManualRow() {
 
 async function loadTemplates() {
   templates.value = await listTemplates()
-  const def = templates.value.find((t) => t.isDefault) || templates.value[0]
-  if (def && !form.templateId) {
-    form.templateId = def.id
-    activeTemplate.value = def
-  } else if (form.templateId) {
-    activeTemplate.value = templates.value.find((t) => t.id === form.templateId) || def || null
-  }
+  useLayoutTemplate(pickDefaultLayout())
 }
 
 watch(
   () => form.templateId,
   (id) => {
-    activeTemplate.value = templates.value.find((t) => t.id === id) || null
+    const tpl = layoutTemplates.value.find((t) => t.id === id) || null
+    // 禁止选中业务模板作为版式
+    if (id && !tpl) {
+      useLayoutTemplate(pickDefaultLayout())
+      return
+    }
+    activeTemplate.value = tpl
   },
 )
 
 async function loadQuote() {
   if (!quoteId.value) {
-    if (skeletonMode.value) {
-      await applySkeleton(true)
-    } else {
-      addManualRow()
+    const bizTemplateId = Number(route.query.bizTemplateId || 0)
+    if (bizTemplateId > 0) {
+      const biz = bizTemplates.value.find((t) => t.id === bizTemplateId)
+      if (biz) {
+        selectedBizId.value = biz.id
+        if (!form.title || form.title === '报价单') {
+          form.title = biz.name || '报价单'
+        }
+        await applySkeleton(true)
+        router.replace({ path: '/quotes/new' })
+        return
+      }
     }
+    addManualRow()
     return
   }
   loading.value = true
@@ -218,7 +290,6 @@ async function loadQuote() {
     form.discountAmt = q.discountAmt || 0
     form.shippingAmt = q.shippingAmt || 0
     form.taxAmt = q.taxAmt || 0
-    form.templateId = q.templateId || null
     form.quoteNo = q.quoteNo || ''
     form.items = (q.items || []).map((it, i) => ({
       sort: it.sort || (i + 1) * 10,
@@ -240,12 +311,24 @@ async function loadQuote() {
       paramsText: it.paramsText || '',
       remark: it.remark || '',
     }))
-    if (q.templateSnap) {
+    // 版式统一用版式模板：历史若绑了业务模板，改回默认版式
+    const bound = q.templateId ? templates.value.find((t) => t.id === q.templateId) : null
+    if (bound && !isSkeletonTemplate(bound)) {
+      useLayoutTemplate(bound)
+    } else if (q.templateSnap) {
       try {
-        activeTemplate.value = JSON.parse(q.templateSnap)
+        const snap = JSON.parse(q.templateSnap) as QuoteTemplate
+        if (!isSkeletonTemplate(snap) && snap.id) {
+          const live = layoutTemplates.value.find((t) => t.id === snap.id)
+          useLayoutTemplate(live || snap)
+        } else {
+          useLayoutTemplate(pickDefaultLayout())
+        }
       } catch {
-        /* ignore */
+        useLayoutTemplate(pickDefaultLayout())
       }
+    } else {
+      useLayoutTemplate(pickDefaultLayout())
     }
   } catch (e) {
     ElMessage.error((e as Error).message)
@@ -464,10 +547,10 @@ onMounted(async () => {
         <el-card shadow="never" class="block">
           <template #header>
             <div class="card-head">
-              <span>报价明细{{ skeletonMode ? '（组车骨架）' : '' }}</span>
+              <span>报价明细{{ skeletonMode ? '（业务模板）' : '' }}</span>
               <div class="card-actions">
                 <el-button @click="itemsZoomed = true">放大编辑</el-button>
-                <el-button v-if="skeletonMode" type="warning" plain @click="applySkeleton()">套用骨架</el-button>
+                <el-button v-if="skeletonMode" type="warning" plain @click="applySkeleton()">套用业务模板</el-button>
                 <el-button v-if="!skeletonMode" type="primary" @click="skuDrawer = true">从商品中心添加</el-button>
                 <el-button v-if="!skeletonMode" @click="addManualRow">手填一行</el-button>
               </div>
@@ -486,18 +569,26 @@ onMounted(async () => {
         <el-card shadow="never" class="block">
           <template #header>模板与合计</template>
           <el-form label-width="88px">
-            <el-form-item label="模板">
-              <el-select v-model="form.templateId" style="width:100%" placeholder="选择模板">
-                <el-option
-                  v-for="t in templates"
-                  :key="t.id"
-                  :label="isSkeletonTemplate(t) ? `${t.name}（骨架）` : t.name"
-                  :value="t.id"
-                />
+            <el-form-item label="版式">
+              <el-select v-model="form.templateId" style="width:100%" placeholder="选择版式模板">
+                <el-option v-for="t in layoutTemplates" :key="t.id" :label="t.name" :value="t.id" />
               </el-select>
             </el-form-item>
-            <el-form-item v-if="skeletonMode" label="骨架">
-              <el-button type="warning" plain style="width:100%" @click="applySkeleton()">套用模板骨架行</el-button>
+            <el-form-item label="预览项">
+              <el-checkbox v-model="previewShowRetailPrice">显示零售价</el-checkbox>
+            </el-form-item>
+            <el-form-item label="业务模板">
+              <el-select
+                v-model="selectedBizId"
+                clearable
+                style="width:100%"
+                placeholder="可选：套用产品/配件骨架"
+              >
+                <el-option v-for="t in bizTemplates" :key="t.id" :label="t.name" :value="t.id" />
+              </el-select>
+            </el-form-item>
+            <el-form-item v-if="selectedBizId">
+              <el-button type="warning" plain style="width:100%" @click="applySkeleton()">套用业务明细</el-button>
             </el-form-item>
             <el-form-item label="折扣"><el-input-number v-model="form.discountAmt" :min="0" :precision="2" style="width:100%" /></el-form-item>
             <el-form-item label="运费"><el-input-number v-model="form.shippingAmt" :min="0" :precision="2" style="width:100%" /></el-form-item>
@@ -508,7 +599,7 @@ onMounted(async () => {
             <div>成本合计：¥{{ costTotal.toFixed(2) }}</div>
             <div>报价小计：¥{{ subtotal.toFixed(2) }}</div>
             <div class="profit">预估利润：¥{{ profit.toFixed(2) }}</div>
-            <div class="grand">合计（对客）：¥{{ total.toFixed(2) }}</div>
+            <div class="grand">合计：¥{{ total.toFixed(2) }}</div>
           </div>
         </el-card>
       </el-col>
@@ -580,7 +671,7 @@ onMounted(async () => {
     <!-- 离屏导出：不依赖预览弹窗，避免 Dialog transform 裁切与剪贴板手势丢失 -->
     <div class="export-host" aria-hidden="true">
       <div ref="exportRef" class="export-sheet-host">
-        <QuoteSheet :quote="previewQuote" :template="activeTemplate" />
+        <QuoteSheet :quote="previewQuote" :template="sheetTemplate" />
       </div>
     </div>
 
@@ -592,9 +683,13 @@ onMounted(async () => {
       append-to-body
       class="quote-preview-dialog"
     >
+      <div class="preview-toolbar">
+        <el-checkbox v-model="previewShowRetailPrice">显示零售价</el-checkbox>
+        <span class="preview-tip">关闭后预览 / 复制图片 / PDF 均不显示零售价</span>
+      </div>
       <div class="preview-wrap">
         <div ref="previewRef" class="preview-sheet-host">
-          <QuoteSheet :quote="previewQuote" :template="activeTemplate" />
+          <QuoteSheet :quote="previewQuote" :template="sheetTemplate" />
         </div>
       </div>
       <template #footer>
@@ -635,6 +730,14 @@ onMounted(async () => {
 .drawer-hint { margin: 0 0 10px; color: #8f959e; font-size: 12px; line-height: 1.5; }
 .preview-wrap { overflow: auto; max-height: 70vh; background: #eef0f3; padding: 16px; display: flex; justify-content: center; }
 .preview-sheet-host { flex: 0 0 auto; max-width: 100%; }
+.preview-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.preview-tip { color: #909399; font-size: 12px; }
 .export-host {
   position: fixed;
   left: -12000px;
