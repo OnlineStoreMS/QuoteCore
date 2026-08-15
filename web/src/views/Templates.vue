@@ -2,7 +2,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { deleteTemplate, listTemplates, saveTemplate, type QuoteTemplate } from '../api/quote'
-import { uploadImage } from '../api/upload'
+import { uploadImage, uploadImageFromUrl, isQuoteStoredUrl } from '../api/upload'
 
 const loading = ref(false)
 const list = ref<QuoteTemplate[]>([])
@@ -56,6 +56,7 @@ function openCreate() {
     showTotals: true,
     stylePreset: 'compare',
   })
+  logoLinkDraft.value = ''
   dialog.value = true
 }
 
@@ -78,15 +79,47 @@ function openEdit(row: QuoteTemplate) {
     showTotals: row.showTotals,
     stylePreset: row.stylePreset || 'compare',
   })
+  logoLinkDraft.value = row.logoUrl || ''
   dialog.value = true
 }
+
+const logoLinkDraft = ref('')
+const logoUploading = ref(false)
 
 async function onUpload(opt: { file: File }) {
   try {
     form.logoUrl = await uploadImage(opt.file, 'logo')
+    logoLinkDraft.value = form.logoUrl
     ElMessage.success('Logo 已上传')
   } catch (e) {
     ElMessage.error((e as Error).message)
+  }
+}
+
+async function applyLogoLink() {
+  const raw = logoLinkDraft.value.trim()
+  if (!raw) {
+    form.logoUrl = ''
+    return
+  }
+  if (isQuoteStoredUrl(raw)) {
+    form.logoUrl = raw
+    ElMessage.success('已使用本站图片')
+    return
+  }
+  if (!/^https?:\/\//i.test(raw)) {
+    ElMessage.error('请粘贴以 http(s):// 开头的图片链接')
+    return
+  }
+  logoUploading.value = true
+  try {
+    form.logoUrl = await uploadImageFromUrl(raw, 'logo')
+    logoLinkDraft.value = form.logoUrl
+    ElMessage.success('已上传到报价中心')
+  } catch (e) {
+    ElMessage.error((e as Error).message || '上传失败')
+  } finally {
+    logoUploading.value = false
   }
 }
 
@@ -159,7 +192,10 @@ onMounted(load)
               <el-button>上传</el-button>
             </el-upload>
           </div>
-          <el-input v-model="form.logoUrl" clearable placeholder="或粘贴 Logo 图片链接" style="margin-top: 8px" />
+          <div class="logo-link">
+            <el-input v-model="logoLinkDraft" clearable placeholder="粘贴 Logo 图片链接，将上传到报价中心" />
+            <el-button type="primary" :loading="logoUploading" @click="applyLogoLink">上传到报价中心</el-button>
+          </div>
         </el-form-item>
         <el-form-item label="店名"><el-input v-model="form.shopName" /></el-form-item>
         <el-form-item label="电话"><el-input v-model="form.shopPhone" /></el-form-item>
@@ -187,4 +223,6 @@ onMounted(load)
 .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .hint { color: #909399; font-size: 13px; }
 .logo-row { display: flex; align-items: center; gap: 12px; }
+.logo-link { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+.logo-link .el-input { flex: 1; }
 </style>

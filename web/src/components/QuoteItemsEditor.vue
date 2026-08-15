@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { FullScreen } from '@element-plus/icons-vue'
+import { ref } from 'vue'
 import type { QuoteItem } from '../api/quote'
-import { uploadImage } from '../api/upload'
+import { isQuoteStoredUrl, uploadImage, uploadImageFromUrl } from '../api/upload'
 import { ElMessage } from 'element-plus'
 
 const props = withDefaults(
@@ -111,6 +112,45 @@ async function uploadRowImage(idx: number, opt: { file: File }) {
   }
 }
 
+const linkDraft = ref('')
+const linkIdx = ref(-1)
+const linkUploading = ref(false)
+
+function openLinkPopover(idx: number) {
+  linkIdx.value = idx
+  linkDraft.value = props.items[idx]?.imageUrl || ''
+}
+
+async function applyImageLink() {
+  const idx = linkIdx.value
+  const raw = linkDraft.value.trim()
+  if (idx < 0 || !props.items[idx]) return
+  if (!raw) {
+    props.items[idx].imageUrl = ''
+    return
+  }
+  if (isQuoteStoredUrl(raw)) {
+    props.items[idx].imageUrl = raw
+    ElMessage.success('已使用本站图片')
+    return
+  }
+  if (!/^https?:\/\//i.test(raw)) {
+    ElMessage.error('请粘贴以 http(s):// 开头的图片链接')
+    return
+  }
+  linkUploading.value = true
+  try {
+    const url = await uploadImageFromUrl(raw, 'items')
+    props.items[idx].imageUrl = url
+    linkDraft.value = url
+    ElMessage.success('已上传到报价中心')
+  } catch (e) {
+    ElMessage.error((e as Error).message || '上传失败')
+  } finally {
+    linkUploading.value = false
+  }
+}
+
 function openImage(url?: string) {
   const u = (url || '').trim()
   if (!u) return
@@ -154,19 +194,25 @@ function openImage(url?: string) {
               <el-upload :show-file-list="false" :http-request="(o: any) => uploadRowImage($index, o)" accept="image/*">
                 <el-button link type="primary">上传</el-button>
               </el-upload>
-              <el-popover placement="bottom" :width="320" trigger="click">
+              <el-popover placement="bottom" :width="340" trigger="click" @show="openLinkPopover($index)">
                 <template #reference>
                   <el-button link type="primary">链接</el-button>
                 </template>
                 <div class="img-url-box">
                   <el-input
-                    v-model="row.imageUrl"
+                    v-model="linkDraft"
                     type="textarea"
                     :rows="2"
                     clearable
-                    placeholder="粘贴图片链接，如 https://…"
+                    placeholder="粘贴图片链接，将自动上传到报价中心"
+                    @keyup.enter.exact="applyImageLink"
                   />
-                  <div class="img-url-tip">支持直接粘贴外链 URL</div>
+                  <div class="img-url-actions">
+                    <el-button type="primary" size="small" :loading="linkUploading" @click="applyImageLink">
+                      上传到报价中心
+                    </el-button>
+                  </div>
+                  <div class="img-url-tip">外链会转存到报价中心，避免失效</div>
                 </div>
               </el-popover>
             </div>
@@ -219,6 +265,7 @@ function openImage(url?: string) {
 .img-cell { display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .img-actions { display: flex; gap: 2px; flex-wrap: wrap; justify-content: center; }
 .img-url-box { display: flex; flex-direction: column; gap: 6px; }
+.img-url-actions { display: flex; justify-content: flex-end; }
 .img-url-tip { font-size: 12px; color: #8f959e; }
 .thumb-btn {
   padding: 0;

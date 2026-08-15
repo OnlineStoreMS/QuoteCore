@@ -16,6 +16,7 @@ import (
 
 type Storage interface {
 	Upload(file *multipart.FileHeader, subdir string) (string, error)
+	UploadPath(srcPath, originalName, subdir string) (string, error)
 	ResolvePublicURL(stored string) string
 }
 
@@ -47,6 +48,35 @@ func (s *LocalStorage) Upload(file *multipart.FileHeader, subdir string) (string
 	defer src.Close()
 
 	ext := filepath.Ext(file.Filename)
+	name := fmt.Sprintf("%s_%s%s", time.Now().Format("20060102150405"), uuid.New().String()[:8], ext)
+	rel := filepath.Join(subdir, name)
+	destPath := filepath.Join(s.baseDir, rel)
+	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+		return "", err
+	}
+	dst, err := os.Create(destPath)
+	if err != nil {
+		return "", err
+	}
+	defer dst.Close()
+	if _, err := io.Copy(dst, src); err != nil {
+		return "", err
+	}
+	urlPath := strings.ReplaceAll(filepath.Join(s.prefix, rel), "\\", "/")
+	return s.baseURL + "/" + urlPath, nil
+}
+
+func (s *LocalStorage) UploadPath(srcPath, originalName, subdir string) (string, error) {
+	src, err := os.Open(srcPath)
+	if err != nil {
+		return "", err
+	}
+	defer src.Close()
+
+	ext := filepath.Ext(originalName)
+	if ext == "" {
+		ext = filepath.Ext(srcPath)
+	}
 	name := fmt.Sprintf("%s_%s%s", time.Now().Format("20060102150405"), uuid.New().String()[:8], ext)
 	rel := filepath.Join(subdir, name)
 	destPath := filepath.Join(s.baseDir, rel)

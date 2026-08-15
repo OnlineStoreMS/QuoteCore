@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"mime/multipart"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -133,6 +134,54 @@ func (s *MinIOStorage) Upload(file *multipart.FileHeader, subdir string) (string
 		return "", err
 	}
 	return s.baseURL + "/" + objectKey, nil
+}
+
+func (s *MinIOStorage) UploadPath(srcPath, originalName, subdir string) (string, error) {
+	src, err := os.Open(srcPath)
+	if err != nil {
+		return "", err
+	}
+	defer src.Close()
+	stat, err := src.Stat()
+	if err != nil {
+		return "", err
+	}
+
+	ext := filepath.Ext(originalName)
+	if ext == "" {
+		ext = filepath.Ext(srcPath)
+	}
+	name := fmt.Sprintf("%s_%s%s", time.Now().Format("20060102150405"), uuid.New().String()[:8], ext)
+	subdir = strings.Trim(subdir, "/")
+	objectKey := s.rootPrefix
+	if subdir != "" {
+		objectKey += "/" + subdir
+	}
+	objectKey += "/" + safeFilename(name)
+
+	contentType := contentTypeFromName(originalName)
+	_, err = s.client.PutObject(context.Background(), s.bucket, objectKey, src, stat.Size(), minio.PutObjectOptions{
+		ContentType: contentType,
+	})
+	if err != nil {
+		return "", err
+	}
+	return s.baseURL + "/" + objectKey, nil
+}
+
+func contentTypeFromName(name string) string {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".webp":
+		return "image/webp"
+	case ".gif":
+		return "image/gif"
+	default:
+		return "application/octet-stream"
+	}
 }
 
 func (s *MinIOStorage) ResolvePublicURL(stored string) string {

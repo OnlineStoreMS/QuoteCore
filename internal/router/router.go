@@ -53,6 +53,7 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	adminGroup.Use(adminmw.AdminAuth(&cfg.Auth, jwtMgr))
 	admin.RegisterRoutes(adminGroup, h)
 	adminGroup.POST("/upload", uploadH.Upload)
+	adminGroup.POST("/upload/from-url", uploadH.UploadFromURL)
 
 	return r
 }
