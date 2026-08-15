@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import QuoteSheet from '../components/QuoteSheet.vue'
+import QuoteItemsEditor from '../components/QuoteItemsEditor.vue'
 import {
   getQuote,
   listTemplates,
@@ -14,7 +15,6 @@ import {
   type QuoteTemplate,
   type SkuHit,
 } from '../api/quote'
-import { uploadImage } from '../api/upload'
 import { copyElementAsImage, downloadElementAsPdf } from '../utils/exportQuote'
 
 const route = useRoute()
@@ -32,6 +32,7 @@ const previewRef = ref<HTMLElement | null>(null)
 const showPreview = ref(false)
 const imagePreviewUrl = ref('')
 const showImagePreview = ref(false)
+const itemsZoomed = ref(false)
 
 function openImagePreview(url?: string) {
   const u = (url || '').trim()
@@ -107,17 +108,6 @@ function emptyItem(partial?: Partial<QuoteItem>): QuoteItem {
   }
 }
 
-function sameProduct(a: QuoteItem, b: QuoteItem): boolean {
-  if (a.productId && b.productId) return Number(a.productId) === Number(b.productId)
-  return (a.name || '').trim() !== '' && (a.name || '').trim() === (b.name || '').trim()
-}
-
-/** 同一产品组的首行（产品名可编辑） */
-function isProductHead(idx: number): boolean {
-  if (idx <= 0) return true
-  return !sameProduct(form.items[idx], form.items[idx - 1])
-}
-
 function findLastSameProductIndex(productId?: number | null, name?: string): number {
   for (let i = form.items.length - 1; i >= 0; i--) {
     const it = form.items[i]
@@ -135,56 +125,6 @@ function renumberSort() {
 
 function addManualRow() {
   form.items.push(emptyItem())
-  renumberSort()
-}
-
-/** 在当前产品下追加一行规格（产品名沿用，规格新开） */
-function addSpecRow(idx: number) {
-  const base = form.items[idx]
-  if (!base) return
-  const row = emptyItem({
-    source: base.source || 'manual',
-    productId: base.productId ?? null,
-    skuId: null,
-    name: base.name,
-    imageUrl: '',
-    unit: base.unit || '件',
-    paramsText: base.paramsText || '',
-  })
-  form.items.splice(idx + 1, 0, row)
-  renumberSort()
-}
-
-/** 改首行产品名时，同步同组后续规格行 */
-function onProductNameInput(idx: number, val: string) {
-  const old = form.items[idx].name
-  form.items[idx].name = val
-  const head = form.items[idx]
-  for (let i = idx + 1; i < form.items.length; i++) {
-    const it = form.items[i]
-    if (head.productId && it.productId && Number(it.productId) === Number(head.productId)) {
-      it.name = val
-      continue
-    }
-    if (!head.productId && (it.name || '') === (old || '')) {
-      it.name = val
-      continue
-    }
-    break
-  }
-}
-
-function removeRow(idx: number) {
-  form.items.splice(idx, 1)
-  renumberSort()
-}
-
-function moveRow(idx: number, dir: -1 | 1) {
-  const j = idx + dir
-  if (j < 0 || j >= form.items.length) return
-  const tmp = form.items[idx]
-  form.items[idx] = form.items[j]
-  form.items[j] = tmp
   renumberSort()
 }
 
@@ -353,14 +293,6 @@ function pickSku(s: SkuHit) {
   ElMessage.success(head ? `已追加规格：${row.specLabel || '—'}` : '已加入明细（可继续点选多规格）')
 }
 
-async function uploadRowImage(idx: number, opt: { file: File }) {
-  try {
-    form.items[idx].imageUrl = await uploadImage(opt.file, 'items')
-  } catch (e) {
-    ElMessage.error((e as Error).message)
-  }
-}
-
 async function doCopyImage() {
   showPreview.value = true
   await new Promise((r) => setTimeout(r, 80))
@@ -448,93 +380,19 @@ onMounted(async () => {
           <template #header>
             <div class="card-head">
               <span>报价明细</span>
-              <div>
+              <div class="card-actions">
+                <el-button @click="itemsZoomed = true">放大编辑</el-button>
                 <el-button type="primary" @click="skuDrawer = true">从商品中心添加</el-button>
                 <el-button @click="addManualRow">手填一行</el-button>
               </div>
             </div>
           </template>
 
-          <el-table :data="form.items" border size="small" row-key="sort">
-            <el-table-column label="产品" min-width="160">
-              <template #default="{ row, $index }">
-                <el-input
-                  v-if="isProductHead($index)"
-                  :model-value="row.name"
-                  placeholder="产品名称"
-                  @update:model-value="(v: string) => onProductNameInput($index, v)"
-                />
-                <div v-else class="spec-cont">└ 同产品规格</div>
-              </template>
-            </el-table-column>
-            <el-table-column label="规格" width="130">
-              <template #default="{ row }"><el-input v-model="row.specLabel" placeholder="规格" /></template>
-            </el-table-column>
-            <el-table-column label="图" width="112">
-              <template #default="{ row, $index }">
-                <div class="img-cell">
-                  <button
-                    v-if="row.imageUrl"
-                    type="button"
-                    class="thumb-btn"
-                    title="预览图片"
-                    @click="openImagePreview(row.imageUrl)"
-                  >
-                    <img :src="row.imageUrl" alt="" class="thumb" />
-                  </button>
-                  <div class="img-actions">
-                    <el-upload :show-file-list="false" :http-request="(o:any) => uploadRowImage($index, o)" accept="image/*">
-                      <el-button link type="primary">上传</el-button>
-                    </el-upload>
-                    <el-popover placement="bottom" :width="300" trigger="click">
-                      <template #reference>
-                        <el-button link type="primary">链接</el-button>
-                      </template>
-                      <div class="img-url-box">
-                        <el-input
-                          v-model="row.imageUrl"
-                          type="textarea"
-                          :rows="2"
-                          clearable
-                          placeholder="粘贴图片链接，如 https://…"
-                        />
-                        <div class="img-url-tip">支持直接粘贴外链 URL</div>
-                      </div>
-                    </el-popover>
-                  </div>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column label="数量" width="90">
-              <template #default="{ row }"><el-input-number v-model="row.qty" :min="0.01" :step="1" controls-position="right" style="width:100%" /></template>
-            </el-table-column>
-            <el-table-column label="零售价" width="100">
-              <template #default="{ row }"><el-input-number v-model="row.retailPrice" :min="0" :precision="2" controls-position="right" style="width:100%" /></template>
-            </el-table-column>
-            <el-table-column label="报价" width="100">
-              <template #default="{ row }"><el-input-number v-model="row.quotePrice" :min="0" :precision="2" controls-position="right" style="width:100%" /></template>
-            </el-table-column>
-            <el-table-column label="小计" width="90" align="right">
-              <template #default="{ row }">{{ (Number(row.qty||0)*Number(row.quotePrice||0)).toFixed(2) }}</template>
-            </el-table-column>
-            <el-table-column label="升级款" width="120">
-              <template #default="{ row }"><el-input v-model="row.upgradeNote" /></template>
-            </el-table-column>
-            <el-table-column label="参数" width="140">
-              <template #default="{ row }"><el-input v-model="row.paramsText" /></template>
-            </el-table-column>
-            <el-table-column label="备注" width="120">
-              <template #default="{ row }"><el-input v-model="row.remark" /></template>
-            </el-table-column>
-            <el-table-column label="操作" width="168" fixed="right">
-              <template #default="{ $index }">
-                <el-button link type="primary" @click="addSpecRow($index)">加规格</el-button>
-                <el-button link @click="moveRow($index, -1)">上</el-button>
-                <el-button link @click="moveRow($index, 1)">下</el-button>
-                <el-button link type="danger" @click="removeRow($index)">删</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
+          <QuoteItemsEditor
+            :items="form.items"
+            @preview-image="openImagePreview"
+            @zoom="itemsZoomed = true"
+          />
         </el-card>
       </el-col>
 
@@ -559,7 +417,7 @@ onMounted(async () => {
       </el-col>
     </el-row>
 
-    <el-drawer v-model="skuDrawer" title="从商品中心选 SKU" size="560px">
+    <el-drawer v-model="skuDrawer" title="从商品中心选 SKU" size="560px" append-to-body>
       <p class="drawer-hint">可连续点选多个规格；同一商品会沿用首次产品名，并追加为新规格行。</p>
       <div class="drawer-search">
         <el-input v-model="skuKeyword" placeholder="关键词" @keyup.enter="searchSku" />
@@ -580,7 +438,7 @@ onMounted(async () => {
       </el-table>
     </el-drawer>
 
-    <el-drawer v-model="custDrawer" title="选择客户" size="420px">
+    <el-drawer v-model="custDrawer" title="选择客户" size="420px" append-to-body>
       <div class="drawer-search">
         <el-input v-model="custKeyword" placeholder="姓名/电话" @keyup.enter="searchCust" />
         <el-button type="primary" :loading="searching" @click="searchCust">搜索</el-button>
@@ -590,6 +448,35 @@ onMounted(async () => {
         <el-table-column prop="primaryPhone" label="电话" width="120" />
       </el-table>
     </el-drawer>
+
+    <el-dialog
+      v-model="itemsZoomed"
+      title="报价明细 · 放大编辑"
+      fullscreen
+      append-to-body
+      destroy-on-close
+      class="items-zoom-dialog"
+    >
+      <div class="zoom-toolbar">
+        <div class="zoom-actions">
+          <el-button type="primary" @click="skuDrawer = true">从商品中心添加</el-button>
+          <el-button @click="addManualRow">手填一行</el-button>
+        </div>
+        <div class="zoom-sum">
+          小计 ¥{{ subtotal.toFixed(2) }}　合计 ¥{{ total.toFixed(2) }}
+        </div>
+      </div>
+      <div class="zoom-body">
+        <QuoteItemsEditor
+          :items="form.items"
+          large
+          @preview-image="openImagePreview"
+        />
+      </div>
+      <template #footer>
+        <el-button type="primary" @click="itemsZoomed = false">完成编辑</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog
       v-model="showPreview"
@@ -632,37 +519,27 @@ onMounted(async () => {
 .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 12px; flex-wrap: wrap; }
 .topbar .left, .topbar .right { display: flex; gap: 8px; align-items: center; }
 .block { margin-bottom: 12px; }
-.card-head { display: flex; justify-content: space-between; align-items: center; }
+.card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .inline { display: flex; gap: 8px; width: 100%; }
-.img-cell { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-.img-actions { display: flex; gap: 2px; flex-wrap: wrap; justify-content: center; }
-.img-url-box { display: flex; flex-direction: column; gap: 6px; }
-.img-url-tip { font-size: 12px; color: #8f959e; }
-.thumb-btn {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  cursor: zoom-in;
-  line-height: 0;
-  border-radius: 4px;
-  overflow: hidden;
-  width: 36px;
-  height: 36px;
-}
-.thumb {
-  width: 36px;
-  height: 36px;
-  object-fit: cover;
-  display: block;
-}
 .sum { margin-top: 8px; text-align: right; line-height: 1.8; }
 .grand { font-size: 18px; font-weight: 700; }
 .drawer-search { display: flex; gap: 8px; margin-bottom: 12px; }
 .drawer-hint { margin: 0 0 10px; color: #8f959e; font-size: 12px; line-height: 1.5; }
-.spec-cont { color: #8f959e; font-size: 12px; padding: 0 4px; }
 .preview-wrap { overflow: auto; max-height: 70vh; background: #eef0f3; padding: 16px; display: flex; justify-content: center; }
 .preview-sheet-host { flex: 0 0 auto; max-width: 100%; }
 .sku-thumb { width: 36px; height: 36px; object-fit: cover; border-radius: 4px; display: block; }
+.zoom-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.zoom-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.zoom-sum { color: #606266; font-size: 14px; }
+.zoom-body { overflow: auto; max-height: calc(100vh - 160px); }
 .image-preview-body {
   display: flex;
   align-items: center;
