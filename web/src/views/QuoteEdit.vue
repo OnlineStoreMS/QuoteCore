@@ -80,7 +80,7 @@ const previewQuote = computed(() => ({
   items: form.items,
 }))
 
-function emptyItem(): QuoteItem {
+function emptyItem(partial?: Partial<QuoteItem>): QuoteItem {
   return {
     sort: (form.items.length + 1) * 10,
     source: 'manual',
@@ -94,15 +94,80 @@ function emptyItem(): QuoteItem {
     upgradeNote: '',
     paramsText: '',
     remark: '',
+    ...partial,
   }
+}
+
+function sameProduct(a: QuoteItem, b: QuoteItem): boolean {
+  if (a.productId && b.productId) return Number(a.productId) === Number(b.productId)
+  return (a.name || '').trim() !== '' && (a.name || '').trim() === (b.name || '').trim()
+}
+
+/** 同一产品组的首行（产品名可编辑） */
+function isProductHead(idx: number): boolean {
+  if (idx <= 0) return true
+  return !sameProduct(form.items[idx], form.items[idx - 1])
+}
+
+function findLastSameProductIndex(productId?: number | null, name?: string): number {
+  for (let i = form.items.length - 1; i >= 0; i--) {
+    const it = form.items[i]
+    if (productId && it.productId && Number(it.productId) === Number(productId)) return i
+    if (!productId && name && (it.name || '').trim() === name.trim()) return i
+  }
+  return -1
+}
+
+function renumberSort() {
+  form.items.forEach((it, i) => {
+    it.sort = (i + 1) * 10
+  })
 }
 
 function addManualRow() {
   form.items.push(emptyItem())
+  renumberSort()
+}
+
+/** 在当前产品下追加一行规格（产品名沿用，规格新开） */
+function addSpecRow(idx: number) {
+  const base = form.items[idx]
+  if (!base) return
+  const row = emptyItem({
+    source: base.source || 'manual',
+    productId: base.productId ?? null,
+    skuId: null,
+    name: base.name,
+    imageUrl: '',
+    unit: base.unit || '件',
+    paramsText: base.paramsText || '',
+  })
+  form.items.splice(idx + 1, 0, row)
+  renumberSort()
+}
+
+/** 改首行产品名时，同步同组后续规格行 */
+function onProductNameInput(idx: number, val: string) {
+  const old = form.items[idx].name
+  form.items[idx].name = val
+  const head = form.items[idx]
+  for (let i = idx + 1; i < form.items.length; i++) {
+    const it = form.items[i]
+    if (head.productId && it.productId && Number(it.productId) === Number(head.productId)) {
+      it.name = val
+      continue
+    }
+    if (!head.productId && (it.name || '') === (old || '')) {
+      it.name = val
+      continue
+    }
+    break
+  }
 }
 
 function removeRow(idx: number) {
   form.items.splice(idx, 1)
+  renumberSort()
 }
 
 function moveRow(idx: number, dir: -1 | 1) {
@@ -111,6 +176,7 @@ function moveRow(idx: number, dir: -1 | 1) {
   const tmp = form.items[idx]
   form.items[idx] = form.items[j]
   form.items[j] = tmp
+  renumberSort()
 }
 
 async function loadTemplates() {
@@ -255,24 +321,27 @@ function pickCustomer(c: CustomerHit) {
 }
 
 function pickSku(s: SkuHit) {
-  form.items.push({
-    sort: (form.items.length + 1) * 10,
+  const existingIdx = findLastSameProductIndex(s.productId)
+  const head = existingIdx >= 0 ? form.items[existingIdx] : null
+  // 同一商品再次选取：沿用首次产品名，只追加规格行
+  const row = emptyItem({
     source: 'product',
     productId: s.productId,
     skuId: s.skuId,
-    name: s.productName,
+    name: head?.name || s.productName,
     specLabel: s.specLabel || s.skuCode || '',
     imageUrl: s.pic || s.productPic || '',
-    qty: 1,
-    unit: '件',
     retailPrice: s.price || 0,
     quotePrice: s.price || 0,
-    upgradeNote: '',
-    paramsText: s.brandName ? `品牌：${s.brandName}` : '',
-    remark: '',
+    paramsText: head?.paramsText || (s.brandName ? `品牌：${s.brandName}` : ''),
   })
-  skuDrawer.value = false
-  ElMessage.success('已加入明细')
+  if (existingIdx >= 0) {
+    form.items.splice(existingIdx + 1, 0, row)
+  } else {
+    form.items.push(row)
+  }
+  renumberSort()
+  ElMessage.success(head ? `已追加规格：${row.specLabel || '—'}` : '已加入明细（可继续点选多规格）')
 }
 
 async function uploadRowImage(idx: number, opt: { file: File }) {
@@ -377,12 +446,20 @@ onMounted(async () => {
             </div>
           </template>
 
-          <el-table :data="form.items" border size="small">
+          <el-table :data="form.items" border size="small" row-key="sort">
             <el-table-column label="产品" min-width="160">
-              <template #default="{ row }"><el-input v-model="row.name" /></template>
+              <template #default="{ row, $index }">
+                <el-input
+                  v-if="isProductHead($index)"
+                  :model-value="row.name"
+                  placeholder="产品名称"
+                  @update:model-value="(v: string) => onProductNameInput($index, v)"
+                />
+                <div v-else class="spec-cont">└ 同产品规格</div>
+              </template>
             </el-table-column>
             <el-table-column label="规格" width="130">
-              <template #default="{ row }"><el-input v-model="row.specLabel" /></template>
+              <template #default="{ row }"><el-input v-model="row.specLabel" placeholder="规格" /></template>
             </el-table-column>
             <el-table-column label="图" width="90">
               <template #default="{ row, $index }">
@@ -415,8 +492,9 @@ onMounted(async () => {
             <el-table-column label="备注" width="120">
               <template #default="{ row }"><el-input v-model="row.remark" /></template>
             </el-table-column>
-            <el-table-column label="操作" width="120" fixed="right">
+            <el-table-column label="操作" width="168" fixed="right">
               <template #default="{ $index }">
+                <el-button link type="primary" @click="addSpecRow($index)">加规格</el-button>
                 <el-button link @click="moveRow($index, -1)">上</el-button>
                 <el-button link @click="moveRow($index, 1)">下</el-button>
                 <el-button link type="danger" @click="removeRow($index)">删</el-button>
@@ -447,17 +525,19 @@ onMounted(async () => {
       </el-col>
     </el-row>
 
-    <el-drawer v-model="skuDrawer" title="从商品中心选 SKU" size="520px">
+    <el-drawer v-model="skuDrawer" title="从商品中心选 SKU" size="560px">
+      <p class="drawer-hint">可连续点选多个规格；同一商品会沿用首次产品名，并追加为新规格行。</p>
       <div class="drawer-search">
         <el-input v-model="skuKeyword" placeholder="关键词" @keyup.enter="searchSku" />
         <el-button type="primary" :loading="searching" @click="searchSku">搜索</el-button>
+        <el-button @click="skuDrawer = false">完成</el-button>
       </div>
       <el-table :data="skuHits" size="small" @row-click="pickSku">
         <el-table-column label="图" width="56">
           <template #default="{ row }"><el-image :src="row.pic || row.productPic" style="width:36px;height:36px" fit="cover" /></template>
         </el-table-column>
         <el-table-column prop="productName" label="商品" min-width="140" />
-        <el-table-column prop="specLabel" label="规格" width="100" />
+        <el-table-column prop="specLabel" label="规格" min-width="120" />
         <el-table-column label="售价" width="80">
           <template #default="{ row }">¥{{ Number(row.price||0).toFixed(2) }}</template>
         </el-table-column>
@@ -499,5 +579,7 @@ onMounted(async () => {
 .sum { margin-top: 8px; text-align: right; line-height: 1.8; }
 .grand { font-size: 18px; font-weight: 700; }
 .drawer-search { display: flex; gap: 8px; margin-bottom: 12px; }
+.drawer-hint { margin: 0 0 10px; color: #8f959e; font-size: 12px; line-height: 1.5; }
+.spec-cont { color: #8f959e; font-size: 12px; padding: 0 4px; }
 .preview-wrap { overflow: auto; max-height: 70vh; background: #eef0f3; padding: 16px; display: flex; justify-content: center; }
 </style>

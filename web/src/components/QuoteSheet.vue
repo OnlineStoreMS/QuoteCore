@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { QuoteItem, QuoteTemplate } from '../api/quote'
 
-defineProps<{
+const props = defineProps<{
   quote: {
     quoteNo?: string
     title: string
@@ -23,6 +23,16 @@ defineProps<{
 
 function money(v: number) {
   return Number(v || 0).toFixed(2)
+}
+
+function sameProduct(a: QuoteItem, b: QuoteItem): boolean {
+  if (a.productId && b.productId) return Number(a.productId) === Number(b.productId)
+  return (a.name || '').trim() !== '' && (a.name || '').trim() === (b.name || '').trim()
+}
+
+function isProductHead(idx: number): boolean {
+  if (idx <= 0) return true
+  return !sameProduct(props.quote.items[idx], props.quote.items[idx - 1])
 }
 </script>
 
@@ -71,10 +81,17 @@ function money(v: number) {
             <img v-if="it.imageUrl" :src="it.imageUrl" class="thumb" alt="" />
           </td>
           <td>
-            <div class="name">{{ it.name }}</div>
-            <div v-if="template?.showUpgrade !== false && it.upgradeNote" class="muted">升级：{{ it.upgradeNote }}</div>
-            <div v-if="template?.showParams !== false && it.paramsText" class="muted">参数：{{ it.paramsText }}</div>
-            <div v-if="it.remark" class="muted">备注：{{ it.remark }}</div>
+            <template v-if="isProductHead(idx)">
+              <div class="name">{{ it.name }}</div>
+              <div v-if="template?.showUpgrade !== false && it.upgradeNote" class="muted">升级：{{ it.upgradeNote }}</div>
+              <div v-if="template?.showParams !== false && it.paramsText" class="muted">参数：{{ it.paramsText }}</div>
+              <div v-if="it.remark" class="muted">备注：{{ it.remark }}</div>
+            </template>
+            <template v-else>
+              <div v-if="template?.showUpgrade !== false && it.upgradeNote" class="muted">升级：{{ it.upgradeNote }}</div>
+              <div v-if="template?.showParams !== false && it.paramsText" class="muted">参数：{{ it.paramsText }}</div>
+              <div v-if="it.remark" class="muted">备注：{{ it.remark }}</div>
+            </template>
           </td>
           <td>{{ it.specLabel || '—' }}</td>
           <td>{{ it.qty }}{{ it.unit }}</td>

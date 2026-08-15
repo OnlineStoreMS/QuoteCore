@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -78,7 +79,74 @@ func (c *Client) SearchSkus(ctx context.Context, authHeader, keyword string, pag
 	if pageData.List == nil {
 		pageData.List = []SkuSearchItem{}
 	}
+	for i := range pageData.List {
+		pageData.List[i].SpecLabel = SpecValuesLabel(pageData.List[i].Specs, pageData.List[i].SpecLabel, pageData.List[i].SkuCode)
+	}
 	return pageData.List, pageData.Total, nil
+}
+
+// SpecValuesLabel 仅保留规格值（如「盒装 HG400-9飞轮 11-34T」），不含「颜色分类:」等规格名。
+func SpecValuesLabel(specs map[string]string, fallback, skuCode string) string {
+	if len(specs) > 0 {
+		keys := make([]string, 0, len(specs))
+		for k := range specs {
+			k = strings.TrimSpace(k)
+			if k == "" {
+				continue
+			}
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			v := strings.TrimSpace(specs[k])
+			if v == "" {
+				continue
+			}
+			parts = append(parts, v)
+		}
+		if len(parts) > 0 {
+			return strings.Join(parts, " / ")
+		}
+	}
+	label := stripSpecNamePrefixes(fallback)
+	if label != "" {
+		return label
+	}
+	return strings.TrimSpace(skuCode)
+}
+
+func stripSpecNamePrefixes(label string) string {
+	label = strings.TrimSpace(label)
+	if label == "" || label == "-" {
+		return ""
+	}
+	parts := strings.Split(label, " / ")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if v, ok := cutSpecValue(p); ok {
+			out = append(out, v)
+			continue
+		}
+		out = append(out, p)
+	}
+	return strings.Join(out, " / ")
+}
+
+func cutSpecValue(part string) (string, bool) {
+	for _, sep := range []string{": ", "：", ":"} {
+		if i := strings.Index(part, sep); i >= 0 {
+			v := strings.TrimSpace(part[i+len(sep):])
+			if v != "" {
+				return v, true
+			}
+		}
+	}
+	return "", false
 }
 
 func (c *Client) get(ctx context.Context, authHeader, path string, dest any) error {
