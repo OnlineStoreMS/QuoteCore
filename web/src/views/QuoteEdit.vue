@@ -461,13 +461,30 @@ onMounted(async () => {
             <el-table-column label="规格" width="130">
               <template #default="{ row }"><el-input v-model="row.specLabel" placeholder="规格" /></template>
             </el-table-column>
-            <el-table-column label="图" width="90">
+            <el-table-column label="图" width="112">
               <template #default="{ row, $index }">
                 <div class="img-cell">
-                  <el-image v-if="row.imageUrl" :src="row.imageUrl" style="width:36px;height:36px" fit="cover" />
-                  <el-upload :show-file-list="false" :http-request="(o:any) => uploadRowImage($index, o)" accept="image/*">
-                    <el-button link type="primary">传图</el-button>
-                  </el-upload>
+                  <el-image v-if="row.imageUrl" :src="row.imageUrl" style="width:36px;height:36px" fit="cover" :preview-src-list="[row.imageUrl]" />
+                  <div class="img-actions">
+                    <el-upload :show-file-list="false" :http-request="(o:any) => uploadRowImage($index, o)" accept="image/*">
+                      <el-button link type="primary">上传</el-button>
+                    </el-upload>
+                    <el-popover placement="bottom" :width="300" trigger="click">
+                      <template #reference>
+                        <el-button link type="primary">链接</el-button>
+                      </template>
+                      <div class="img-url-box">
+                        <el-input
+                          v-model="row.imageUrl"
+                          type="textarea"
+                          :rows="2"
+                          clearable
+                          placeholder="粘贴图片链接，如 https://…"
+                        />
+                        <div class="img-url-tip">支持直接粘贴外链 URL</div>
+                      </div>
+                    </el-popover>
+                  </div>
                 </div>
               </template>
             </el-table-column>
@@ -576,6 +593,9 @@ onMounted(async () => {
 .card-head { display: flex; justify-content: space-between; align-items: center; }
 .inline { display: flex; gap: 8px; width: 100%; }
 .img-cell { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.img-actions { display: flex; gap: 2px; flex-wrap: wrap; justify-content: center; }
+.img-url-box { display: flex; flex-direction: column; gap: 6px; }
+.img-url-tip { font-size: 12px; color: #8f959e; }
 .sum { margin-top: 8px; text-align: right; line-height: 1.8; }
 .grand { font-size: 18px; font-weight: 700; }
 .drawer-search { display: flex; gap: 8px; margin-bottom: 12px; }

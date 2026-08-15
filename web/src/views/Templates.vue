@@ -156,9 +156,10 @@ onMounted(load)
           <div class="logo-row">
             <el-image v-if="form.logoUrl" :src="form.logoUrl" style="width: 64px; height: 64px" fit="contain" />
             <el-upload :show-file-list="false" :http-request="onUpload as any" accept="image/*">
-              <el-button>上传 Logo</el-button>
+              <el-button>上传</el-button>
             </el-upload>
           </div>
+          <el-input v-model="form.logoUrl" clearable placeholder="或粘贴 Logo 图片链接" style="margin-top: 8px" />
         </el-form-item>
         <el-form-item label="店名"><el-input v-model="form.shopName" /></el-form-item>
         <el-form-item label="电话"><el-input v-model="form.shopPhone" /></el-form-item>
