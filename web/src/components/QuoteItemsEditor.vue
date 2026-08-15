@@ -72,6 +72,7 @@ function emptyItem(partial?: Partial<QuoteItem>): QuoteItem {
     qty: 1,
     unit: '件',
     retailPrice: 0,
+    costPrice: 0,
     quotePrice: 0,
     upgradeNote: '',
     paramsText: '',
@@ -295,6 +296,11 @@ function openImage(url?: string) {
       <el-table-column label="零售价" :width="large ? 130 : 110">
         <template #default="{ row }">
           <el-input v-model.number="row.retailPrice" inputmode="decimal" placeholder="0.00" />
+        </template>
+      </el-table-column>
+      <el-table-column label="成本价" :width="large ? 130 : 110">
+        <template #default="{ row }">
+          <el-input v-model.number="row.costPrice" inputmode="decimal" placeholder="拿货价" />
         </template>
       </el-table-column>
       <el-table-column v-if="!skeleton" label="小计" :width="large ? 110 : 90" align="right">

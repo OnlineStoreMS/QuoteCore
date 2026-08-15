@@ -71,9 +71,37 @@ const form = reactive({
 const subtotal = computed(() =>
   form.items.reduce((s, it) => s + Number(it.qty || 0) * Number(it.quotePrice || 0), 0),
 )
+const retailTotal = computed(() =>
+  Math.round(form.items.reduce((s, it) => s + Number(it.qty || 0) * Number(it.retailPrice || 0), 0) * 100) / 100,
+)
+const costTotal = computed(() =>
+  Math.round(form.items.reduce((s, it) => s + Number(it.qty || 0) * Number(it.costPrice || 0), 0) * 100) / 100,
+)
 const total = computed(() =>
   Math.round((subtotal.value - Number(form.discountAmt || 0) + Number(form.shippingAmt || 0) + Number(form.taxAmt || 0)) * 100) / 100,
 )
+const profit = computed(() => Math.round((total.value - costTotal.value) * 100) / 100)
+
+function emptyItem(partial?: Partial<QuoteItem>): QuoteItem {
+  return {
+    sort: (form.items.length + 1) * 10,
+    source: 'manual',
+    category: '',
+    partName: '',
+    name: '',
+    specLabel: '',
+    imageUrl: '',
+    qty: 1,
+    unit: '件',
+    retailPrice: 0,
+    costPrice: 0,
+    quotePrice: 0,
+    upgradeNote: '',
+    paramsText: '',
+    remark: '',
+    ...partial,
+  }
+}
 
 const previewQuote = computed(() => ({
   quoteNo: form.quoteNo,
@@ -94,26 +122,6 @@ const previewQuote = computed(() => ({
 
 const skeletonMode = computed(() => isSkeletonTemplate(activeTemplate.value))
 
-function emptyItem(partial?: Partial<QuoteItem>): QuoteItem {
-  return {
-    sort: (form.items.length + 1) * 10,
-    source: 'manual',
-    category: '',
-    partName: '',
-    name: '',
-    specLabel: '',
-    imageUrl: '',
-    qty: 1,
-    unit: '件',
-    retailPrice: 0,
-    quotePrice: 0,
-    upgradeNote: '',
-    paramsText: '',
-    remark: '',
-    ...partial,
-  }
-}
-
 function itemsAreBlank(): boolean {
   if (!form.items.length) return true
   return form.items.every(
@@ -122,7 +130,8 @@ function itemsAreBlank(): boolean {
       !(it.specLabel || '').trim() &&
       !(it.partName || '').trim() &&
       !Number(it.quotePrice || 0) &&
-      !Number(it.retailPrice || 0),
+      !Number(it.retailPrice || 0) &&
+      !Number(it.costPrice || 0),
   )
 }
 
@@ -223,6 +232,7 @@ async function loadQuote() {
       qty: it.qty || 1,
       unit: it.unit || '件',
       retailPrice: it.retailPrice || 0,
+      costPrice: it.costPrice || 0,
       quotePrice: it.quotePrice || 0,
       upgradeNote: it.upgradeNote || '',
       paramsText: it.paramsText || '',
@@ -444,9 +454,7 @@ onMounted(async () => {
           <QuoteItemsEditor
             :items="form.items"
             :skeleton="skeletonMode"
-            show-zoom-btn
             @preview-image="openImagePreview"
-            @zoom="itemsZoomed = true"
           />
         </el-card>
       </el-col>
@@ -473,8 +481,11 @@ onMounted(async () => {
             <el-form-item label="税费"><el-input-number v-model="form.taxAmt" :min="0" :precision="2" style="width:100%" /></el-form-item>
           </el-form>
           <div class="sum">
-            <div>小计：¥{{ subtotal.toFixed(2) }}</div>
-            <div class="grand">合计：¥{{ total.toFixed(2) }}</div>
+            <div>零售价合计：¥{{ retailTotal.toFixed(2) }}</div>
+            <div>成本合计：¥{{ costTotal.toFixed(2) }}</div>
+            <div>报价小计：¥{{ subtotal.toFixed(2) }}</div>
+            <div class="profit">预估利润：¥{{ profit.toFixed(2) }}</div>
+            <div class="grand">合计（对客）：¥{{ total.toFixed(2) }}</div>
           </div>
         </el-card>
       </el-col>
@@ -527,7 +538,7 @@ onMounted(async () => {
           <el-button v-if="!skeletonMode" @click="addManualRow">手填一行</el-button>
         </div>
         <div class="zoom-sum">
-          小计 ¥{{ subtotal.toFixed(2) }}　合计 ¥{{ total.toFixed(2) }}
+          零售 ¥{{ retailTotal.toFixed(2) }}　成本 ¥{{ costTotal.toFixed(2) }}　合计 ¥{{ total.toFixed(2) }}
         </div>
       </div>
       <div class="zoom-body">
@@ -588,6 +599,7 @@ onMounted(async () => {
 .card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .inline { display: flex; gap: 8px; width: 100%; }
 .sum { margin-top: 8px; text-align: right; line-height: 1.8; }
+.profit { color: #67c23a; }
 .grand { font-size: 18px; font-weight: 700; }
 .drawer-search { display: flex; gap: 8px; margin-bottom: 12px; }
 .drawer-hint { margin: 0 0 10px; color: #8f959e; font-size: 12px; line-height: 1.5; }

@@ -41,6 +41,7 @@ type QuoteItemReq struct {
 	Qty            float64 `json:"qty"`
 	Unit           string  `json:"unit"`
 	RetailPrice    float64 `json:"retailPrice"`
+	CostPrice      float64 `json:"costPrice"`
 	QuotePrice     float64 `json:"quotePrice"`
 	UpgradeNote    string  `json:"upgradeNote"`
 	ParamsText     string  `json:"paramsText"`

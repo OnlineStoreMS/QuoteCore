@@ -114,6 +114,7 @@ type QuoteItem struct {
 	Qty            float64        `gorm:"type:decimal(12,2);not null;default:1" json:"qty"`
 	Unit           string         `gorm:"size:16;not null;default:件" json:"unit"`
 	RetailPrice    float64        `gorm:"type:decimal(12,2);not null;default:0" json:"retailPrice"`
+	CostPrice      float64        `gorm:"type:decimal(12,2);not null;default:0" json:"costPrice"` // 成本/拿货价（内部）
 	QuotePrice     float64        `gorm:"type:decimal(12,2);not null;default:0" json:"quotePrice"`
 	LineTotal      float64        `gorm:"type:decimal(12,2);not null;default:0" json:"lineTotal"`
 	UpgradeNote    string         `gorm:"size:512" json:"upgradeNote"`

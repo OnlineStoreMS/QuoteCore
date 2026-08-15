@@ -53,6 +53,7 @@ export interface QuoteItem {
   qty: number
   unit: string
   retailPrice: number
+  costPrice: number
   quotePrice: number
   lineTotal?: number
   upgradeNote: string
@@ -220,6 +221,7 @@ export function seedItemsFromTemplate(t: QuoteTemplate): QuoteItem[] {
     qty: 1,
     unit: '件',
     retailPrice: 0,
+    costPrice: 0,
     quotePrice: 0,
     upgradeNote: '',
     paramsText: '',
