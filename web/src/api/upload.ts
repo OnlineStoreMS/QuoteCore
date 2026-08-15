@@ -1,0 +1,13 @@
+import client, { unwrap } from './client'
+
+export async function uploadImage(file: File, subdir = 'quote'): Promise<string> {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('subdir', subdir)
+  const res = await client.post('/upload', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  })
+  const data = unwrap<{ url: string }>(res)
+  return data.url
+}
