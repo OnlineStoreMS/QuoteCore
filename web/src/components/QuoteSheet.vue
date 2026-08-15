@@ -24,6 +24,16 @@ const props = defineProps<{
 }>()
 
 const skeleton = computed(() => isSkeletonTemplate(props.template))
+const showRetail = computed(() => props.template?.showRetailPrice !== false)
+const specColStyle = computed(() =>
+  showRetail.value
+    ? skeleton.value
+      ? undefined
+      : { width: '140px' }
+    : skeleton.value
+      ? { minWidth: '220px' }
+      : { width: '220px' },
+)
 
 function money(v: number) {
   return Number(v || 0).toFixed(2)
@@ -86,9 +96,9 @@ function isCategoryHead(idx: number): boolean {
           <th style="width:72px">产品</th>
           <th style="width:150px">名称</th>
           <th style="width:72px">配件</th>
-          <th>规格</th>
+          <th :style="specColStyle">规格</th>
           <th style="width:72px">优惠价</th>
-          <th v-if="template?.showRetailPrice !== false" style="width:72px">零售价</th>
+          <th v-if="showRetail" style="width:72px">零售价</th>
           <th v-if="template?.showSpecImage !== false" style="width:56px">图</th>
           <th style="width:90px">备注</th>
         </tr>
@@ -96,9 +106,9 @@ function isCategoryHead(idx: number): boolean {
           <th style="width:36px">#</th>
           <th v-if="template?.showSpecImage !== false" style="width:56px">图</th>
           <th>产品</th>
-          <th style="width:140px">规格</th>
+          <th :style="specColStyle">规格</th>
           <th style="width:56px">数量</th>
-          <th v-if="template?.showRetailPrice !== false" style="width:72px">零售价</th>
+          <th v-if="showRetail" style="width:72px">零售价</th>
           <th style="width:72px">报价</th>
           <th style="width:80px">小计</th>
         </tr>
@@ -120,7 +130,7 @@ function isCategoryHead(idx: number): boolean {
             <td>{{ it.partName || '—' }}</td>
             <td><span class="spec-label">{{ it.specLabel || '—' }}</span></td>
             <td>{{ money(it.quotePrice) }}</td>
-            <td v-if="template?.showRetailPrice !== false">{{ money(it.retailPrice) }}</td>
+            <td v-if="showRetail">{{ money(it.retailPrice) }}</td>
             <td v-if="template?.showSpecImage !== false">
               <img v-if="it.imageUrl" :src="it.imageUrl" class="thumb" alt="" crossorigin="anonymous" />
             </td>
@@ -155,7 +165,7 @@ function isCategoryHead(idx: number): boolean {
               <span class="spec-label">{{ it.specLabel || '—' }}</span>
             </td>
             <td>{{ it.qty }}{{ it.unit }}</td>
-            <td v-if="template?.showRetailPrice !== false">{{ money(it.retailPrice) }}</td>
+            <td v-if="showRetail">{{ money(it.retailPrice) }}</td>
             <td>{{ money(it.quotePrice) }}</td>
             <td>{{ money(it.qty * it.quotePrice) }}</td>
           </tr>
