@@ -22,19 +22,50 @@ export async function waitForImages(root: HTMLElement, timeoutMs = 8000) {
   )
 }
 
-/** 打开预览后等到 DOM 与图片就绪 */
+function blobToDataURL(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader()
+    fr.onload = () => resolve(String(fr.result || ''))
+    fr.onerror = () => reject(fr.error || new Error('read failed'))
+    fr.readAsDataURL(blob)
+  })
+}
+
+/** 把图片转成 dataURL，避免跨域/CORS 污染 canvas */
+async function inlineImagesAsDataURL(root: HTMLElement) {
+  const imgs = Array.from(root.querySelectorAll('img'))
+  await Promise.all(
+    imgs.map(async (img) => {
+      const src = (img.currentSrc || img.getAttribute('src') || '').trim()
+      if (!src || src.startsWith('data:') || src.startsWith('blob:')) return
+      try {
+        const res = await fetch(src, { mode: 'cors', credentials: 'omit', cache: 'no-cache' })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const blob = await res.blob()
+        if (!blob.type.startsWith('image/') && blob.size === 0) throw new Error('empty image')
+        img.src = await blobToDataURL(blob)
+        img.removeAttribute('crossorigin')
+        img.loading = 'eager'
+      } catch {
+        // 同源失败时尝试去掉 crossorigin 再等原图（可能污染 canvas，后面 toBlob 会兜底）
+        img.removeAttribute('crossorigin')
+      }
+    }),
+  )
+}
+
+/** 打开预览后等到 DOM 与图片就绪（兼容旧调用） */
 export async function prepareExportElement(getEl: () => HTMLElement | null, open: () => void) {
   open()
   await nextTick()
   await nextTick()
-  // 等 dialog 动画 / 布局
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
-  await new Promise((r) => setTimeout(r, 120))
+  await new Promise((r) => setTimeout(r, 160))
 
   let el: HTMLElement | null = null
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 30; i++) {
     el = getEl()
-    if (el) break
+    if (el && el.offsetWidth > 0) break
     await new Promise((r) => setTimeout(r, 50))
   }
   if (!el) throw new Error('预览区域未就绪，请先点「预览」再复制')
@@ -44,33 +75,65 @@ export async function prepareExportElement(getEl: () => HTMLElement | null, open
 }
 
 export async function elementToCanvas(el: HTMLElement) {
-  // 禁止 allowTaint：否则 toBlob / 剪贴板会失败
-  return html2canvas(el, {
-    scale: 2,
-    useCORS: true,
-    allowTaint: false,
-    backgroundColor: '#ffffff',
-    logging: false,
-    imageTimeout: 15000,
-    onclone: (_doc, cloned) => {
-      cloned.querySelectorAll('img').forEach((img) => {
-        img.crossOrigin = 'anonymous'
-        // 避免克隆节点仍在懒加载态
-        if (img.loading === 'lazy') img.loading = 'eager'
-      })
-    },
-  })
+  const width = Math.max(el.scrollWidth, el.offsetWidth, 794)
+  const clone = el.cloneNode(true) as HTMLElement
+  clone.setAttribute('data-quote-export-clone', '1')
+  clone.style.cssText = [
+    'position:fixed',
+    'left:-12000px',
+    'top:0',
+    `width:${width}px`,
+    'margin:0',
+    'padding:0',
+    'background:#ffffff',
+    'z-index:-1',
+    'pointer-events:none',
+    'opacity:1',
+    'transform:none',
+    'overflow:visible',
+  ].join(';')
+  document.body.appendChild(clone)
+
+  try {
+    await inlineImagesAsDataURL(clone)
+    await waitForImages(clone, 12000)
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+
+    return await html2canvas(clone, {
+      scale: 2,
+      useCORS: true,
+      allowTaint: false,
+      backgroundColor: '#ffffff',
+      logging: false,
+      imageTimeout: 20000,
+      width,
+      windowWidth: width,
+      scrollX: 0,
+      scrollY: 0,
+      onclone: (_doc, cloned) => {
+        cloned.querySelectorAll('img').forEach((img) => {
+          if (img.loading === 'lazy') img.loading = 'eager'
+        })
+      },
+    })
+  } finally {
+    clone.remove()
+  }
 }
 
 function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => {
-        if (blob) resolve(blob)
-        else reject(new Error('生成图片失败（可能含跨域图片，请改用本站上传图）'))
-      },
-      'image/png',
-    )
+    try {
+      canvas.toBlob(
+        (blob) => {
+          if (blob) resolve(blob)
+          else reject(new Error('生成图片失败（画布可能被跨域图片污染，请确认图片已上传到报价中心）'))
+        },
+        'image/png',
+      )
+    } catch (e) {
+      reject(e instanceof Error ? e : new Error('生成图片失败'))
+    }
   })
 }
 
@@ -79,40 +142,61 @@ function downloadBlob(blob: Blob, filename: string) {
   const a = document.createElement('a')
   a.href = url
   a.download = filename
+  a.rel = 'noopener'
+  document.body.appendChild(a)
   a.click()
-  URL.revokeObjectURL(url)
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 2000)
 }
 
 export type CopyImageResult = 'clipboard' | 'download'
 
-export async function copyElementAsImage(el: HTMLElement): Promise<CopyImageResult> {
-  const canvas = await elementToCanvas(el)
-  const blob = await canvasToPngBlob(canvas)
-
-  const canClipboard =
-    typeof navigator !== 'undefined' &&
-    !!navigator.clipboard &&
-    typeof ClipboardItem !== 'undefined' &&
-    window.isSecureContext
-
-  if (canClipboard) {
-    try {
-      // 部分浏览器要求 ClipboardItem 值为 Promise
-      await navigator.clipboard.write([
-        new ClipboardItem({
-          'image/png': Promise.resolve(blob),
-        }),
-      ])
-      return 'clipboard'
-    } catch {
-      // Safari / 权限不足时回退下载
-      downloadBlob(blob, `quote-${Date.now()}.png`)
-      return 'download'
-    }
+async function tryWriteClipboard(blob: Blob): Promise<boolean> {
+  if (typeof navigator === 'undefined' || !navigator.clipboard || typeof ClipboardItem === 'undefined') {
+    return false
+  }
+  if (!window.isSecureContext) return false
+  try {
+    window.focus()
+  } catch {
+    /* ignore */
   }
 
-  downloadBlob(blob, `quote-${Date.now()}.png`)
+  // Chromium: Blob 直接写入更稳；部分环境要求 Promise
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+    return true
+  } catch {
+    /* fallthrough */
+  }
+  try {
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        'image/png': Promise.resolve(blob),
+      }),
+    ])
+    return true
+  } catch {
+    return false
+  }
+}
+
+export async function copyElementAsImage(el: HTMLElement, filename?: string): Promise<CopyImageResult> {
+  const canvas = await elementToCanvas(el)
+  const blob = await canvasToPngBlob(canvas)
+  const name = filename || `quote-${Date.now()}.png`
+
+  if (await tryWriteClipboard(blob)) {
+    return 'clipboard'
+  }
+  downloadBlob(blob, name.endsWith('.png') ? name : `${name}.png`)
   return 'download'
+}
+
+export async function downloadElementAsPng(el: HTMLElement, filename: string) {
+  const canvas = await elementToCanvas(el)
+  const blob = await canvasToPngBlob(canvas)
+  downloadBlob(blob, filename.endsWith('.png') ? filename : `${filename}.png`)
 }
 
 export async function downloadElementAsPdf(el: HTMLElement, filename: string) {
@@ -127,7 +211,6 @@ export async function downloadElementAsPdf(el: HTMLElement, filename: string) {
   const ratio = Math.min(maxW / canvas.width, maxH / canvas.height)
   const w = canvas.width * ratio
   const h = canvas.height * ratio
-  // 多页：超出一页时继续追加
   let remain = h
   let srcY = 0
   const pageContentH = maxH

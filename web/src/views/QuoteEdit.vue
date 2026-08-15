@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import QuoteSheet from '../components/QuoteSheet.vue'
@@ -17,7 +17,7 @@ import {
   type QuoteTemplate,
   type SkuHit,
 } from '../api/quote'
-import { copyElementAsImage, downloadElementAsPdf, prepareExportElement } from '../utils/exportQuote'
+import { copyElementAsImage, downloadElementAsPdf, downloadElementAsPng, waitForImages } from '../utils/exportQuote'
 
 const route = useRoute()
 const router = useRouter()
@@ -31,10 +31,12 @@ const saving = ref(false)
 const templates = ref<QuoteTemplate[]>([])
 const activeTemplate = ref<QuoteTemplate | null>(null)
 const previewRef = ref<HTMLElement | null>(null)
+const exportRef = ref<HTMLElement | null>(null)
 const showPreview = ref(false)
 const imagePreviewUrl = ref('')
 const showImagePreview = ref(false)
 const itemsZoomed = ref(false)
+const exporting = ref(false)
 
 function openImagePreview(url?: string) {
   const u = (url || '').trim()
@@ -347,37 +349,57 @@ function pickSku(s: SkuHit) {
   ElMessage.success(head ? `已追加规格：${row.specLabel || '—'}` : '已加入明细（可继续点选多规格）')
 }
 
+async function readyExportEl() {
+  await nextTick()
+  const el = exportRef.value
+  if (!el) throw new Error('导出区域未就绪')
+  await waitForImages(el)
+  return el
+}
+
 async function doCopyImage() {
+  if (exporting.value) return
+  exporting.value = true
   try {
-    const el = await prepareExportElement(
-      () => previewRef.value,
-      () => {
-        showPreview.value = true
-      },
-    )
-    const mode = await copyElementAsImage(el)
+    const el = await readyExportEl()
+    const mode = await copyElementAsImage(el, form.quoteNo || `quote-${Date.now()}`)
     if (mode === 'clipboard') {
       ElMessage.success('已复制图片到剪贴板，可直接粘贴')
     } else {
-      ElMessage.success('当前环境不支持剪贴板图片，已改为下载 PNG')
+      ElMessage.warning('浏览器限制无法写入剪贴板，已改为下载 PNG')
     }
   } catch (e) {
     ElMessage.error((e as Error).message || '复制失败')
+  } finally {
+    exporting.value = false
+  }
+}
+
+async function doDownloadPng() {
+  if (exporting.value) return
+  exporting.value = true
+  try {
+    const el = await readyExportEl()
+    await downloadElementAsPng(el, form.quoteNo || `quote-${Date.now()}`)
+    ElMessage.success('PNG 已下载')
+  } catch (e) {
+    ElMessage.error((e as Error).message || '下载失败')
+  } finally {
+    exporting.value = false
   }
 }
 
 async function doDownloadPdf() {
+  if (exporting.value) return
+  exporting.value = true
   try {
-    const el = await prepareExportElement(
-      () => previewRef.value,
-      () => {
-        showPreview.value = true
-      },
-    )
+    const el = await readyExportEl()
     await downloadElementAsPdf(el, form.quoteNo || `quote-${Date.now()}`)
     ElMessage.success('PDF 已下载')
   } catch (e) {
     ElMessage.error((e as Error).message || '导出失败')
+  } finally {
+    exporting.value = false
   }
 }
 
@@ -399,9 +421,10 @@ onMounted(async () => {
         <strong>{{ quoteId ? `编辑 ${form.quoteNo}` : '新建报价' }}</strong>
       </div>
       <div class="right">
-        <el-button @click="showPreview = true">预览</el-button>
-        <el-button @click="doCopyImage">复制图片</el-button>
-        <el-button @click="doDownloadPdf">下载 PDF</el-button>
+        <el-button :loading="exporting" @click="showPreview = true">预览</el-button>
+        <el-button :loading="exporting" @click="doCopyImage">复制图片</el-button>
+        <el-button :loading="exporting" @click="doDownloadPng">下载 PNG</el-button>
+        <el-button :loading="exporting" @click="doDownloadPdf">下载 PDF</el-button>
         <el-button type="primary" :loading="saving" @click="onSave">保存</el-button>
       </div>
     </div>
@@ -554,13 +577,19 @@ onMounted(async () => {
       </template>
     </el-dialog>
 
+    <!-- 离屏导出：不依赖预览弹窗，避免 Dialog transform 裁切与剪贴板手势丢失 -->
+    <div class="export-host" aria-hidden="true">
+      <div ref="exportRef" class="export-sheet-host">
+        <QuoteSheet :quote="previewQuote" :template="activeTemplate" />
+      </div>
+    </div>
+
     <el-dialog
       v-model="showPreview"
       title="报价预览"
       width="860px"
       top="4vh"
       append-to-body
-      destroy-on-close
       class="quote-preview-dialog"
     >
       <div class="preview-wrap">
@@ -569,8 +598,9 @@ onMounted(async () => {
         </div>
       </div>
       <template #footer>
-        <el-button @click="doCopyImage">复制图片</el-button>
-        <el-button type="primary" @click="doDownloadPdf">下载 PDF</el-button>
+        <el-button :loading="exporting" @click="doCopyImage">复制图片</el-button>
+        <el-button :loading="exporting" @click="doDownloadPng">下载 PNG</el-button>
+        <el-button type="primary" :loading="exporting" @click="doDownloadPdf">下载 PDF</el-button>
       </template>
     </el-dialog>
 
@@ -605,6 +635,16 @@ onMounted(async () => {
 .drawer-hint { margin: 0 0 10px; color: #8f959e; font-size: 12px; line-height: 1.5; }
 .preview-wrap { overflow: auto; max-height: 70vh; background: #eef0f3; padding: 16px; display: flex; justify-content: center; }
 .preview-sheet-host { flex: 0 0 auto; max-width: 100%; }
+.export-host {
+  position: fixed;
+  left: -12000px;
+  top: 0;
+  width: 794px;
+  pointer-events: none;
+  opacity: 1;
+  z-index: -1;
+}
+.export-sheet-host { width: 794px; background: #fff; }
 .sku-thumb { width: 36px; height: 36px; object-fit: cover; border-radius: 4px; display: block; }
 .zoom-toolbar {
   display: flex;
