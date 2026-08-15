@@ -56,19 +56,56 @@ func (s *QuoteService) DashboardStats(tenantID uint64) (*dto.DashboardStats, err
 	return stats, nil
 }
 
+func templateWithLines(db *gorm.DB) *gorm.DB {
+	return db.Preload("Lines", func(tx *gorm.DB) *gorm.DB {
+		return tx.Order("sort ASC, id ASC")
+	})
+}
+
 func (s *QuoteService) ListTemplates(tenantID uint64) ([]model.QuoteTemplate, error) {
 	var list []model.QuoteTemplate
-	err := s.repos.ScopeTenant(tenantID).Order("is_default DESC, id ASC").Find(&list).Error
+	err := templateWithLines(s.repos.ScopeTenant(tenantID)).Order("is_default DESC, id ASC").Find(&list).Error
 	return list, err
 }
 
 func (s *QuoteService) GetTemplate(tenantID, id uint64) (*model.QuoteTemplate, error) {
 	var item model.QuoteTemplate
-	err := s.repos.ScopeTenant(tenantID).First(&item, id).Error
+	err := templateWithLines(s.repos.ScopeTenant(tenantID)).First(&item, id).Error
 	if err == gorm.ErrRecordNotFound {
 		return nil, ErrNotFound
 	}
 	return &item, err
+}
+
+func normalizeTemplateKind(kind string) string {
+	kind = strings.TrimSpace(kind)
+	if kind == model.TemplateKindSkeleton {
+		return model.TemplateKindSkeleton
+	}
+	return model.TemplateKindLayout
+}
+
+func buildTemplateLines(tenantID, templateID uint64, reqs []dto.TemplateLineReq) ([]model.QuoteTemplateLine, error) {
+	lines := make([]model.QuoteTemplateLine, 0, len(reqs))
+	for i, r := range reqs {
+		part := strings.TrimSpace(r.PartName)
+		if part == "" {
+			return nil, fmt.Errorf("%w: 第 %d 行配件名称必填", ErrBadRequest, i+1)
+		}
+		sort := r.Sort
+		if sort == 0 {
+			sort = (i + 1) * 10
+		}
+		lines = append(lines, model.QuoteTemplateLine{
+			TenantID:   tenantID,
+			TemplateID: templateID,
+			Sort:       sort,
+			Category:   strings.TrimSpace(r.Category),
+			PartName:   part,
+			Hint:       strings.TrimSpace(r.Hint),
+		})
+	}
+	return lines, nil
 }
 
 func (s *QuoteService) SaveTemplate(tenantID, id uint64, req dto.TemplateSaveReq) (*model.QuoteTemplate, error) {
@@ -81,6 +118,15 @@ func (s *QuoteService) SaveTemplate(tenantID, id uint64, req dto.TemplateSaveReq
 	if preset == "" {
 		preset = "compare"
 	}
+	kind := normalizeTemplateKind(req.Kind)
+	if kind == model.TemplateKindSkeleton && len(req.Lines) == 0 {
+		return nil, fmt.Errorf("%w: 骨架模板至少需要一行配件", ErrBadRequest)
+	}
+	lines, err := buildTemplateLines(tenantID, 0, req.Lines)
+	if err != nil {
+		return nil, err
+	}
+
 	var item model.QuoteTemplate
 	if id > 0 {
 		if err := s.repos.ScopeTenant(tenantID).First(&item, id).Error; err != nil {
@@ -93,6 +139,7 @@ func (s *QuoteService) SaveTemplate(tenantID, id uint64, req dto.TemplateSaveReq
 		item.TenantID = tenantID
 	}
 	item.Name = name
+	item.Kind = kind
 	item.IsDefault = req.IsDefault
 	item.LogoURL = strings.TrimSpace(req.LogoURL)
 	item.ShopName = strings.TrimSpace(req.ShopName)
@@ -108,7 +155,7 @@ func (s *QuoteService) SaveTemplate(tenantID, id uint64, req dto.TemplateSaveReq
 	item.ShowTotals = boolOr(req.ShowTotals, true)
 	item.StylePreset = preset
 
-	err := s.repos.DB.Transaction(func(tx *gorm.DB) error {
+	err = s.repos.DB.Transaction(func(tx *gorm.DB) error {
 		if item.IsDefault {
 			if err := tx.Model(&model.QuoteTemplate{}).
 				Where("tenant_id = ?", tenantID).
@@ -117,25 +164,79 @@ func (s *QuoteService) SaveTemplate(tenantID, id uint64, req dto.TemplateSaveReq
 			}
 		}
 		if id == 0 {
-			return tx.Create(&item).Error
+			if err := tx.Create(&item).Error; err != nil {
+				return err
+			}
+		} else if err := tx.Save(&item).Error; err != nil {
+			return err
 		}
-		return tx.Save(&item).Error
+		if err := tx.Where("template_id = ?", item.ID).Delete(&model.QuoteTemplateLine{}).Error; err != nil {
+			return err
+		}
+		for i := range lines {
+			lines[i].TemplateID = item.ID
+			lines[i].TenantID = tenantID
+		}
+		if len(lines) > 0 {
+			if err := tx.Create(&lines).Error; err != nil {
+				return err
+			}
+		}
+		item.Lines = lines
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &item, nil
+	return s.GetTemplate(tenantID, item.ID)
 }
 
 func (s *QuoteService) DeleteTemplate(tenantID, id uint64) error {
-	res := s.repos.ScopeTenant(tenantID).Delete(&model.QuoteTemplate{}, id)
-	if res.Error != nil {
-		return res.Error
+	return s.repos.DB.Transaction(func(tx *gorm.DB) error {
+		res := tx.Where("tenant_id = ?", repo.NormalizeTenantID(tenantID)).Delete(&model.QuoteTemplate{}, id)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return ErrNotFound
+		}
+		return tx.Where("template_id = ?", id).Delete(&model.QuoteTemplateLine{}).Error
+	})
+}
+
+func defaultAssembleLines() []model.QuoteTemplateLine {
+	pairs := [][2]string{
+		{"车架组", "车架"},
+		{"车架组", "前叉"},
+		{"车架组", "座管"},
+		{"车架组", "弯把"},
+		{"车架组", "把立"},
+		{"变速套件", "手变前拨后拨"},
+		{"变速套件", "夹器"},
+		{"变速套件", "飞轮"},
+		{"变速套件", "链条"},
+		{"变速套件", "牙盘"},
+		{"变速套件", "碟片"},
+		{"轮组", "轮组"},
+		{"轮组", "外胎"},
+		{"轮组", "内胎"},
+		{"其他", "中轴"},
+		{"其他", "坐垫"},
+		{"其他", "脚踏"},
+		{"其他", "把带"},
+		{"其他", "水壶架"},
+		{"服务", "组装费"},
+		{"服务", "运费"},
 	}
-	if res.RowsAffected == 0 {
-		return ErrNotFound
+	lines := make([]model.QuoteTemplateLine, 0, len(pairs))
+	for i, p := range pairs {
+		lines = append(lines, model.QuoteTemplateLine{
+			Sort:     (i + 1) * 10,
+			Category: p[0],
+			PartName: p[1],
+		})
 	}
-	return nil
+	return lines
 }
 
 func (s *QuoteService) EnsureDefaultTemplate(tenantID uint64) error {
@@ -144,25 +245,67 @@ func (s *QuoteService) EnsureDefaultTemplate(tenantID uint64) error {
 	if err := s.repos.DB.Model(&model.QuoteTemplate{}).Where("tenant_id = ?", tenantID).Count(&n).Error; err != nil {
 		return err
 	}
+	if n == 0 {
+		tpl := model.QuoteTemplate{
+			TenantID:        tenantID,
+			Name:            "默认报价模板",
+			Kind:            model.TemplateKindLayout,
+			IsDefault:       true,
+			ShopName:        "报价中心",
+			HeaderSubtitle:  "专业配件报价",
+			FooterText:      "本报价单有效期内价格有效，最终解释权归报价方所有。",
+			ShowLogo:        true,
+			ShowRetailPrice: true,
+			ShowSpecImage:   true,
+			ShowUpgrade:     true,
+			ShowParams:      true,
+			ShowTotals:      true,
+			StylePreset:     "compare",
+		}
+		if err := s.repos.DB.Create(&tpl).Error; err != nil {
+			return err
+		}
+	}
+	return s.ensureAssembleSkeleton(tenantID)
+}
+
+func (s *QuoteService) ensureAssembleSkeleton(tenantID uint64) error {
+	var n int64
+	if err := s.repos.DB.Model(&model.QuoteTemplate{}).
+		Where("tenant_id = ? AND kind = ?", tenantID, model.TemplateKindSkeleton).
+		Count(&n).Error; err != nil {
+		return err
+	}
 	if n > 0 {
 		return nil
 	}
 	tpl := model.QuoteTemplate{
 		TenantID:        tenantID,
-		Name:            "默认报价模板",
-		IsDefault:       true,
+		Name:            "组装车报价骨架",
+		Kind:            model.TemplateKindSkeleton,
+		IsDefault:       false,
 		ShopName:        "报价中心",
-		HeaderSubtitle:  "专业配件报价",
+		HeaderSubtitle:  "组车配件清单",
 		FooterText:      "本报价单有效期内价格有效，最终解释权归报价方所有。",
 		ShowLogo:        true,
 		ShowRetailPrice: true,
 		ShowSpecImage:   true,
-		ShowUpgrade:     true,
-		ShowParams:      true,
+		ShowUpgrade:     false,
+		ShowParams:      false,
 		ShowTotals:      true,
 		StylePreset:     "compare",
 	}
-	return s.repos.DB.Create(&tpl).Error
+	return s.repos.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&tpl).Error; err != nil {
+			return err
+		}
+		lines := defaultAssembleLines()
+		for i := range lines {
+			lines[i].TenantID = tenantID
+			lines[i].TemplateID = tpl.ID
+		}
+		return tx.Create(&lines).Error
+	})
 }
 
 func (s *QuoteService) ListQuotes(tenantID uint64, keyword, status string, page, pageSize int) ([]model.Quote, int64, error) {
@@ -222,12 +365,18 @@ func buildItems(tenantID, quoteID uint64, reqs []dto.QuoteItemReq) ([]model.Quot
 	var subtotal float64
 	for i, r := range reqs {
 		name := strings.TrimSpace(r.Name)
-		if name == "" {
-			return nil, 0, fmt.Errorf("%w: 第 %d 行产品名称必填", ErrBadRequest, i+1)
+		category := strings.TrimSpace(r.Category)
+		partName := strings.TrimSpace(r.PartName)
+		if name == "" && category == "" && partName == "" {
+			return nil, 0, fmt.Errorf("%w: 第 %d 行至少填写名称或配件", ErrBadRequest, i+1)
 		}
 		src := strings.TrimSpace(r.Source)
 		if src == "" {
-			src = model.ItemSourceManual
+			if partName != "" {
+				src = model.ItemSourceTemplate
+			} else {
+				src = model.ItemSourceManual
+			}
 		}
 		qty := r.Qty
 		if qty <= 0 {
@@ -244,23 +393,26 @@ func buildItems(tenantID, quoteID uint64, reqs []dto.QuoteItemReq) ([]model.Quot
 			sort = (i + 1) * 10
 		}
 		items = append(items, model.QuoteItem{
-			TenantID:    tenantID,
-			QuoteID:     quoteID,
-			Sort:        sort,
-			Source:      src,
-			ProductID:   r.ProductID,
-			SkuID:       r.SkuID,
-			Name:        name,
-			SpecLabel:   strings.TrimSpace(r.SpecLabel),
-			ImageURL:    strings.TrimSpace(r.ImageURL),
-			Qty:         qty,
-			Unit:        unit,
-			RetailPrice: round2(r.RetailPrice),
-			QuotePrice:  round2(r.QuotePrice),
-			LineTotal:   lineTotal,
-			UpgradeNote: strings.TrimSpace(r.UpgradeNote),
-			ParamsText:  strings.TrimSpace(r.ParamsText),
-			Remark:      strings.TrimSpace(r.Remark),
+			TenantID:       tenantID,
+			QuoteID:        quoteID,
+			Sort:           sort,
+			Source:         src,
+			ProductID:      r.ProductID,
+			SkuID:          r.SkuID,
+			TemplateLineID: r.TemplateLineID,
+			Category:       category,
+			PartName:       partName,
+			Name:           name,
+			SpecLabel:      strings.TrimSpace(r.SpecLabel),
+			ImageURL:       strings.TrimSpace(r.ImageURL),
+			Qty:            qty,
+			Unit:           unit,
+			RetailPrice:    round2(r.RetailPrice),
+			QuotePrice:     round2(r.QuotePrice),
+			LineTotal:      lineTotal,
+			UpgradeNote:    strings.TrimSpace(r.UpgradeNote),
+			ParamsText:     strings.TrimSpace(r.ParamsText),
+			Remark:         strings.TrimSpace(r.Remark),
 		})
 	}
 	return items, round2(subtotal), nil
@@ -427,20 +579,23 @@ func (s *QuoteService) CopyQuote(tenantID, userID, id uint64) (*model.Quote, err
 	items := make([]dto.QuoteItemReq, 0, len(src.Items))
 	for _, it := range src.Items {
 		items = append(items, dto.QuoteItemReq{
-			Sort:        it.Sort,
-			Source:      it.Source,
-			ProductID:   it.ProductID,
-			SkuID:       it.SkuID,
-			Name:        it.Name,
-			SpecLabel:   it.SpecLabel,
-			ImageURL:    it.ImageURL,
-			Qty:         it.Qty,
-			Unit:        it.Unit,
-			RetailPrice: it.RetailPrice,
-			QuotePrice:  it.QuotePrice,
-			UpgradeNote: it.UpgradeNote,
-			ParamsText:  it.ParamsText,
-			Remark:      it.Remark,
+			Sort:           it.Sort,
+			Source:         it.Source,
+			ProductID:      it.ProductID,
+			SkuID:          it.SkuID,
+			TemplateLineID: it.TemplateLineID,
+			Category:       it.Category,
+			PartName:       it.PartName,
+			Name:           it.Name,
+			SpecLabel:      it.SpecLabel,
+			ImageURL:       it.ImageURL,
+			Qty:            it.Qty,
+			Unit:           it.Unit,
+			RetailPrice:    it.RetailPrice,
+			QuotePrice:     it.QuotePrice,
+			UpgradeNote:    it.UpgradeNote,
+			ParamsText:     it.ParamsText,
+			Remark:         it.Remark,
 		})
 	}
 	var valid *string

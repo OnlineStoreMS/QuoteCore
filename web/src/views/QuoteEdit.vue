@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import QuoteSheet from '../components/QuoteSheet.vue'
 import QuoteItemsEditor from '../components/QuoteItemsEditor.vue'
 import {
   getQuote,
+  isSkeletonTemplate,
   listTemplates,
   saveQuote,
   searchCustomers,
   searchProductSkus,
+  seedItemsFromTemplate,
   type CustomerHit,
   type QuoteItem,
   type QuoteTemplate,
@@ -90,10 +92,14 @@ const previewQuote = computed(() => ({
   items: form.items,
 }))
 
+const skeletonMode = computed(() => isSkeletonTemplate(activeTemplate.value))
+
 function emptyItem(partial?: Partial<QuoteItem>): QuoteItem {
   return {
     sort: (form.items.length + 1) * 10,
     source: 'manual',
+    category: '',
+    partName: '',
     name: '',
     specLabel: '',
     imageUrl: '',
@@ -106,6 +112,37 @@ function emptyItem(partial?: Partial<QuoteItem>): QuoteItem {
     remark: '',
     ...partial,
   }
+}
+
+function itemsAreBlank(): boolean {
+  if (!form.items.length) return true
+  return form.items.every(
+    (it) =>
+      !(it.name || '').trim() &&
+      !(it.specLabel || '').trim() &&
+      !(it.partName || '').trim() &&
+      !Number(it.quotePrice || 0) &&
+      !Number(it.retailPrice || 0),
+  )
+}
+
+async function applySkeleton(force = false) {
+  const tpl = activeTemplate.value
+  if (!tpl || !isSkeletonTemplate(tpl)) {
+    ElMessage.warning('当前模板没有骨架明细')
+    return
+  }
+  if (!force && !itemsAreBlank()) {
+    try {
+      await ElMessageBox.confirm('将用模板骨架覆盖当前明细，未保存内容会丢失。继续？', '套用骨架', {
+        type: 'warning',
+      })
+    } catch {
+      return
+    }
+  }
+  form.items = seedItemsFromTemplate(tpl)
+  ElMessage.success(`已套用骨架（${form.items.length} 行）`)
 }
 
 function findLastSameProductIndex(productId?: number | null, name?: string): number {
@@ -148,7 +185,11 @@ watch(
 
 async function loadQuote() {
   if (!quoteId.value) {
-    addManualRow()
+    if (skeletonMode.value) {
+      await applySkeleton(true)
+    } else {
+      addManualRow()
+    }
     return
   }
   loading.value = true
@@ -173,6 +214,9 @@ async function loadQuote() {
       source: it.source || 'manual',
       productId: it.productId,
       skuId: it.skuId,
+      templateLineId: it.templateLineId,
+      category: it.category || '',
+      partName: it.partName || '',
       name: it.name,
       specLabel: it.specLabel || '',
       imageUrl: it.imageUrl || '',
@@ -387,17 +431,20 @@ onMounted(async () => {
         <el-card shadow="never" class="block">
           <template #header>
             <div class="card-head">
-              <span>报价明细</span>
+              <span>报价明细{{ skeletonMode ? '（组车骨架）' : '' }}</span>
               <div class="card-actions">
                 <el-button @click="itemsZoomed = true">放大编辑</el-button>
-                <el-button type="primary" @click="skuDrawer = true">从商品中心添加</el-button>
-                <el-button @click="addManualRow">手填一行</el-button>
+                <el-button v-if="skeletonMode" type="warning" plain @click="applySkeleton()">套用骨架</el-button>
+                <el-button v-if="!skeletonMode" type="primary" @click="skuDrawer = true">从商品中心添加</el-button>
+                <el-button v-if="!skeletonMode" @click="addManualRow">手填一行</el-button>
               </div>
             </div>
           </template>
 
           <QuoteItemsEditor
             :items="form.items"
+            :skeleton="skeletonMode"
+            show-zoom-btn
             @preview-image="openImagePreview"
             @zoom="itemsZoomed = true"
           />
@@ -410,8 +457,16 @@ onMounted(async () => {
           <el-form label-width="88px">
             <el-form-item label="模板">
               <el-select v-model="form.templateId" style="width:100%" placeholder="选择模板">
-                <el-option v-for="t in templates" :key="t.id" :label="t.name" :value="t.id" />
+                <el-option
+                  v-for="t in templates"
+                  :key="t.id"
+                  :label="isSkeletonTemplate(t) ? `${t.name}（骨架）` : t.name"
+                  :value="t.id"
+                />
               </el-select>
+            </el-form-item>
+            <el-form-item v-if="skeletonMode" label="骨架">
+              <el-button type="warning" plain style="width:100%" @click="applySkeleton()">套用模板骨架行</el-button>
             </el-form-item>
             <el-form-item label="折扣"><el-input-number v-model="form.discountAmt" :min="0" :precision="2" style="width:100%" /></el-form-item>
             <el-form-item label="运费"><el-input-number v-model="form.shippingAmt" :min="0" :precision="2" style="width:100%" /></el-form-item>
@@ -467,8 +522,9 @@ onMounted(async () => {
     >
       <div class="zoom-toolbar">
         <div class="zoom-actions">
-          <el-button type="primary" @click="skuDrawer = true">从商品中心添加</el-button>
-          <el-button @click="addManualRow">手填一行</el-button>
+          <el-button v-if="skeletonMode" type="warning" plain @click="applySkeleton()">套用骨架</el-button>
+          <el-button v-if="!skeletonMode" type="primary" @click="skuDrawer = true">从商品中心添加</el-button>
+          <el-button v-if="!skeletonMode" @click="addManualRow">手填一行</el-button>
         </div>
         <div class="zoom-sum">
           小计 ¥{{ subtotal.toFixed(2) }}　合计 ¥{{ total.toFixed(2) }}
@@ -477,6 +533,7 @@ onMounted(async () => {
       <div class="zoom-body">
         <QuoteItemsEditor
           :items="form.items"
+          :skeleton="skeletonMode"
           large
           @preview-image="openImagePreview"
         />

@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { QuoteItem, QuoteTemplate } from '../api/quote'
+import { isSkeletonTemplate } from '../api/quote'
 
 const props = defineProps<{
   quote: {
@@ -21,6 +23,8 @@ const props = defineProps<{
   template?: QuoteTemplate | null
 }>()
 
+const skeleton = computed(() => isSkeletonTemplate(props.template))
+
 function money(v: number) {
   return Number(v || 0).toFixed(2)
 }
@@ -30,9 +34,23 @@ function sameProduct(a: QuoteItem, b: QuoteItem): boolean {
   return (a.name || '').trim() !== '' && (a.name || '').trim() === (b.name || '').trim()
 }
 
+function sameCategory(a: QuoteItem, b: QuoteItem): boolean {
+  const ca = (a.category || '').trim()
+  const cb = (b.category || '').trim()
+  return ca !== '' && ca === cb
+}
+
 function isProductHead(idx: number): boolean {
   if (idx <= 0) return true
   return !sameProduct(props.quote.items[idx], props.quote.items[idx - 1])
+}
+
+function isCategoryHead(idx: number): boolean {
+  if (idx <= 0) return true
+  const cur = props.quote.items[idx]
+  const prev = props.quote.items[idx - 1]
+  if (!(cur.category || '').trim()) return true
+  return !sameCategory(cur, prev)
 }
 </script>
 
@@ -63,7 +81,18 @@ function isProductHead(idx: number): boolean {
 
     <table class="items">
       <thead>
-        <tr>
+        <tr v-if="skeleton">
+          <th style="width:36px">#</th>
+          <th style="width:72px">产品</th>
+          <th style="width:150px">名称</th>
+          <th style="width:72px">配件</th>
+          <th>规格</th>
+          <th style="width:72px">优惠价</th>
+          <th v-if="template?.showRetailPrice !== false" style="width:72px">零售价</th>
+          <th v-if="template?.showSpecImage !== false" style="width:56px">图</th>
+          <th style="width:90px">备注</th>
+        </tr>
+        <tr v-else>
           <th style="width:36px">#</th>
           <th v-if="template?.showSpecImage !== false" style="width:56px">图</th>
           <th>产品</th>
@@ -75,39 +104,64 @@ function isProductHead(idx: number): boolean {
         </tr>
       </thead>
       <tbody>
-        <tr
-          v-for="(it, idx) in quote.items"
-          :key="idx"
-          :class="{ 'spec-row': !isProductHead(idx), 'product-head': isProductHead(idx) }"
-        >
-          <td>{{ idx + 1 }}</td>
-          <td v-if="template?.showSpecImage !== false">
-            <img v-if="it.imageUrl" :src="it.imageUrl" class="thumb" alt="" crossorigin="anonymous" />
-          </td>
-          <td>
-            <template v-if="isProductHead(idx)">
-              <div class="name">{{ it.name }}</div>
-              <div v-if="template?.showUpgrade !== false && it.upgradeNote" class="muted">升级：{{ it.upgradeNote }}</div>
-              <div v-if="template?.showParams !== false && it.paramsText" class="muted">参数：{{ it.paramsText }}</div>
-              <div v-if="it.remark" class="muted">备注：{{ it.remark }}</div>
-            </template>
-            <template v-else>
-              <div class="spec-cont">└ 同产品规格</div>
-              <div v-if="template?.showUpgrade !== false && it.upgradeNote" class="muted">升级：{{ it.upgradeNote }}</div>
-              <div v-if="template?.showParams !== false && it.paramsText" class="muted">参数：{{ it.paramsText }}</div>
-              <div v-if="it.remark" class="muted">备注：{{ it.remark }}</div>
-            </template>
-          </td>
-          <td>
-            <span class="spec-label">{{ it.specLabel || '—' }}</span>
-          </td>
-          <td>{{ it.qty }}{{ it.unit }}</td>
-          <td v-if="template?.showRetailPrice !== false">{{ money(it.retailPrice) }}</td>
-          <td>{{ money(it.quotePrice) }}</td>
-          <td>{{ money(it.qty * it.quotePrice) }}</td>
-        </tr>
+        <template v-if="skeleton">
+          <tr
+            v-for="(it, idx) in quote.items"
+            :key="idx"
+            :class="{ 'spec-row': !isCategoryHead(idx), 'product-head': isCategoryHead(idx) }"
+          >
+            <td>{{ idx + 1 }}</td>
+            <td>{{ isCategoryHead(idx) ? (it.category || '—') : '' }}</td>
+            <td>
+              <template v-if="isCategoryHead(idx)">
+                <div class="name">{{ it.name || '—' }}</div>
+              </template>
+            </td>
+            <td>{{ it.partName || '—' }}</td>
+            <td><span class="spec-label">{{ it.specLabel || '—' }}</span></td>
+            <td>{{ money(it.quotePrice) }}</td>
+            <td v-if="template?.showRetailPrice !== false">{{ money(it.retailPrice) }}</td>
+            <td v-if="template?.showSpecImage !== false">
+              <img v-if="it.imageUrl" :src="it.imageUrl" class="thumb" alt="" crossorigin="anonymous" />
+            </td>
+            <td>{{ it.remark || '' }}</td>
+          </tr>
+        </template>
+        <template v-else>
+          <tr
+            v-for="(it, idx) in quote.items"
+            :key="idx"
+            :class="{ 'spec-row': !isProductHead(idx), 'product-head': isProductHead(idx) }"
+          >
+            <td>{{ idx + 1 }}</td>
+            <td v-if="template?.showSpecImage !== false">
+              <img v-if="it.imageUrl" :src="it.imageUrl" class="thumb" alt="" crossorigin="anonymous" />
+            </td>
+            <td>
+              <template v-if="isProductHead(idx)">
+                <div class="name">{{ it.name }}</div>
+                <div v-if="template?.showUpgrade !== false && it.upgradeNote" class="muted">升级：{{ it.upgradeNote }}</div>
+                <div v-if="template?.showParams !== false && it.paramsText" class="muted">参数：{{ it.paramsText }}</div>
+                <div v-if="it.remark" class="muted">备注：{{ it.remark }}</div>
+              </template>
+              <template v-else>
+                <div class="spec-cont">└ 同产品规格</div>
+                <div v-if="template?.showUpgrade !== false && it.upgradeNote" class="muted">升级：{{ it.upgradeNote }}</div>
+                <div v-if="template?.showParams !== false && it.paramsText" class="muted">参数：{{ it.paramsText }}</div>
+                <div v-if="it.remark" class="muted">备注：{{ it.remark }}</div>
+              </template>
+            </td>
+            <td>
+              <span class="spec-label">{{ it.specLabel || '—' }}</span>
+            </td>
+            <td>{{ it.qty }}{{ it.unit }}</td>
+            <td v-if="template?.showRetailPrice !== false">{{ money(it.retailPrice) }}</td>
+            <td>{{ money(it.quotePrice) }}</td>
+            <td>{{ money(it.qty * it.quotePrice) }}</td>
+          </tr>
+        </template>
         <tr v-if="!quote.items.length">
-          <td :colspan="template?.showRetailPrice === false && template?.showSpecImage === false ? 5 : 8" class="empty">暂无明细</td>
+          <td colspan="9" class="empty">暂无明细</td>
         </tr>
       </tbody>
     </table>
@@ -148,15 +202,14 @@ function isProductHead(idx: number): boolean {
 .items { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .items th, .items td { border: 1px solid #d0d3d6; padding: 6px 8px; vertical-align: top; }
 .items th { background: #f5f6f7; text-align: left; }
-.thumb { width: 40px; height: 40px; max-width: 40px; max-height: 40px; object-fit: cover; border-radius: 4px; display: block; }
-.name { font-weight: 600; }
-.spec-cont { color: #8f959e; font-size: 11px; }
-.spec-row td { background: #fafbfc; }
-.spec-row .spec-label { font-weight: 600; }
-.muted { color: #8f959e; font-size: 11px; margin-top: 2px; }
-.empty { text-align: center; color: #8f959e; padding: 24px !important; }
-.totals { margin-top: 14px; text-align: right; }
-.grand { font-size: 16px; font-weight: 700; margin-top: 4px; }
-.remark { margin-top: 12px; color: #4e5969; }
-.foot { margin-top: 18px; padding-top: 10px; border-top: 1px dashed #d0d3d6; color: #8f959e; white-space: pre-wrap; }
+.items .name { font-weight: 600; }
+.items .muted, .spec-cont { color: #8f959e; font-size: 11px; margin-top: 2px; }
+.items .spec-label { word-break: break-all; }
+.items .thumb { width: 40px; height: 40px; object-fit: cover; display: block; border-radius: 2px; }
+.items .empty { text-align: center; color: #8f959e; }
+.items tr.spec-row td { background: #fafbfc; }
+.totals { margin-top: 12px; text-align: right; }
+.totals .grand { font-size: 16px; font-weight: 700; margin-top: 4px; }
+.remark { margin-top: 12px; color: #646a73; }
+.foot { margin-top: 16px; padding-top: 10px; border-top: 1px dashed #d0d3d6; color: #8f959e; white-space: pre-wrap; }
 </style>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { FullScreen } from '@element-plus/icons-vue'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import type { QuoteItem } from '../api/quote'
 import { isQuoteStoredUrl, uploadImage, uploadImageFromUrl } from '../api/upload'
 import { ElMessage } from 'element-plus'
@@ -10,8 +10,10 @@ const props = withDefaults(
     items: QuoteItem[]
     large?: boolean
     showZoomBtn?: boolean
+    /** 组车骨架模式：产品/配件固定，填名称规格价图 */
+    skeleton?: boolean
   }>(),
-  { large: false, showZoomBtn: false },
+  { large: false, showZoomBtn: false, skeleton: false },
 )
 
 const emit = defineEmits<{
@@ -24,10 +26,33 @@ function sameProduct(a: QuoteItem, b: QuoteItem): boolean {
   return (a.name || '').trim() !== '' && (a.name || '').trim() === (b.name || '').trim()
 }
 
+function sameCategory(a: QuoteItem, b: QuoteItem): boolean {
+  const ca = (a.category || '').trim()
+  const cb = (b.category || '').trim()
+  return ca !== '' && ca === cb
+}
+
 function isProductHead(idx: number): boolean {
   if (idx <= 0) return true
-  return !sameProduct(props.items[idx], props.items[idx - 1])
+  const cur = props.items[idx]
+  const prev = props.items[idx - 1]
+  if (props.skeleton) {
+    if ((cur.category || '').trim()) return !sameCategory(cur, prev)
+    return true
+  }
+  return !sameProduct(cur, prev)
 }
+
+function isCategoryHead(idx: number): boolean {
+  if (!props.skeleton) return isProductHead(idx)
+  if (idx <= 0) return true
+  const cur = props.items[idx]
+  const prev = props.items[idx - 1]
+  if (!(cur.category || '').trim()) return true
+  return !sameCategory(cur, prev)
+}
+
+const lockedFromTemplate = computed(() => props.skeleton)
 
 function renumberSort() {
   props.items.forEach((it, i) => {
@@ -39,6 +64,8 @@ function emptyItem(partial?: Partial<QuoteItem>): QuoteItem {
   return {
     sort: (props.items.length + 1) * 10,
     source: 'manual',
+    category: '',
+    partName: '',
     name: '',
     specLabel: '',
     imageUrl: '',
@@ -63,6 +90,8 @@ function addSpecRow(idx: number) {
       source: base.source || 'manual',
       productId: base.productId ?? null,
       skuId: null,
+      category: base.category || '',
+      partName: props.skeleton ? '' : base.partName || '',
       name: base.name,
       imageUrl: '',
       unit: base.unit || '件',
@@ -78,6 +107,13 @@ function onProductNameInput(idx: number, val: string) {
   const head = props.items[idx]
   for (let i = idx + 1; i < props.items.length; i++) {
     const it = props.items[i]
+    if (props.skeleton) {
+      if (sameCategory(head, it)) {
+        // 组内后续行不强制同步名称（Excel 只在组首填名称）
+        continue
+      }
+      break
+    }
     if (head.productId && it.productId && Number(it.productId) === Number(head.productId)) {
       it.name = val
       continue
@@ -164,17 +200,44 @@ function openImage(url?: string) {
       <el-button type="primary" plain :icon="FullScreen" @click="emit('zoom')">放大编辑</el-button>
     </div>
     <el-table :data="items" border :size="large ? 'default' : 'small'" row-key="sort" class="items-table">
-      <el-table-column label="产品" :min-width="large ? 220 : 160">
-        <template #default="{ row, $index }">
-          <el-input
-            v-if="isProductHead($index)"
-            :model-value="row.name"
-            placeholder="产品名称"
-            @update:model-value="(v: string) => onProductNameInput($index, v)"
-          />
-          <div v-else class="spec-cont">└ 同产品规格</div>
-        </template>
-      </el-table-column>
+      <template v-if="skeleton">
+        <el-table-column label="产品" :width="large ? 110 : 96">
+          <template #default="{ row, $index }">
+            <span v-if="isCategoryHead($index)" class="fixed-cell">{{ row.category || '—' }}</span>
+            <span v-else class="muted-cell" />
+          </template>
+        </el-table-column>
+        <el-table-column label="名称" :min-width="large ? 200 : 150">
+          <template #default="{ row, $index }">
+            <el-input
+              v-if="isCategoryHead($index)"
+              :model-value="row.name"
+              placeholder="具体型号/套件名"
+              @update:model-value="(v: string) => onProductNameInput($index, v)"
+            />
+            <span v-else class="muted-cell" />
+          </template>
+        </el-table-column>
+        <el-table-column label="配件" :width="large ? 120 : 100">
+          <template #default="{ row }">
+            <span class="fixed-cell">{{ row.partName || '—' }}</span>
+          </template>
+        </el-table-column>
+      </template>
+      <template v-else>
+        <el-table-column label="产品" :min-width="large ? 220 : 160">
+          <template #default="{ row, $index }">
+            <el-input
+              v-if="isProductHead($index)"
+              :model-value="row.name"
+              placeholder="产品名称"
+              @update:model-value="(v: string) => onProductNameInput($index, v)"
+            />
+            <div v-else class="spec-cont">└ 同产品规格</div>
+          </template>
+        </el-table-column>
+      </template>
+
       <el-table-column label="规格" :min-width="large ? 200 : 130">
         <template #default="{ row }"><el-input v-model="row.specLabel" placeholder="规格" type="textarea" :rows="large ? 2 : 1" /></template>
       </el-table-column>
@@ -219,9 +282,14 @@ function openImage(url?: string) {
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="数量" :width="large ? 120 : 90">
+      <el-table-column v-if="!skeleton" label="数量" :width="large ? 120 : 90">
         <template #default="{ row }">
           <el-input-number v-model="row.qty" :min="0.01" :step="1" controls-position="right" style="width:100%" />
+        </template>
+      </el-table-column>
+      <el-table-column :label="skeleton ? '优惠价' : '报价'" :width="large ? 130 : 110">
+        <template #default="{ row }">
+          <el-input v-model.number="row.quotePrice" inputmode="decimal" placeholder="0.00" />
         </template>
       </el-table-column>
       <el-table-column label="零售价" :width="large ? 130 : 110">
@@ -229,18 +297,13 @@ function openImage(url?: string) {
           <el-input v-model.number="row.retailPrice" inputmode="decimal" placeholder="0.00" />
         </template>
       </el-table-column>
-      <el-table-column label="报价" :width="large ? 130 : 110">
-        <template #default="{ row }">
-          <el-input v-model.number="row.quotePrice" inputmode="decimal" placeholder="0.00" />
-        </template>
-      </el-table-column>
-      <el-table-column label="小计" :width="large ? 110 : 90" align="right">
+      <el-table-column v-if="!skeleton" label="小计" :width="large ? 110 : 90" align="right">
         <template #default="{ row }">{{ (Number(row.qty || 0) * Number(row.quotePrice || 0)).toFixed(2) }}</template>
       </el-table-column>
-      <el-table-column label="升级款" :min-width="large ? 160 : 120">
+      <el-table-column v-if="!skeleton" label="升级款" :min-width="large ? 160 : 120">
         <template #default="{ row }"><el-input v-model="row.upgradeNote" /></template>
       </el-table-column>
-      <el-table-column label="参数" :min-width="large ? 180 : 140">
+      <el-table-column v-if="!skeleton" label="参数" :min-width="large ? 180 : 140">
         <template #default="{ row }"><el-input v-model="row.paramsText" type="textarea" :rows="large ? 2 : 1" /></template>
       </el-table-column>
       <el-table-column label="备注" :min-width="large ? 160 : 120">
@@ -248,7 +311,7 @@ function openImage(url?: string) {
       </el-table-column>
       <el-table-column label="操作" :width="large ? 200 : 168" fixed="right">
         <template #default="{ $index }">
-          <el-button link type="primary" @click="addSpecRow($index)">加规格</el-button>
+          <el-button v-if="!lockedFromTemplate" link type="primary" @click="addSpecRow($index)">加规格</el-button>
           <el-button link @click="moveRow($index, -1)">上</el-button>
           <el-button link @click="moveRow($index, 1)">下</el-button>
           <el-button link type="danger" @click="removeRow($index)">删</el-button>
@@ -262,6 +325,8 @@ function openImage(url?: string) {
 .editor-toolbar { display: flex; justify-content: flex-end; margin-bottom: 8px; }
 .items-editor.large .items-table { --el-font-size-base: 14px; }
 .spec-cont { color: #8f959e; font-size: 12px; padding: 0 4px; }
+.fixed-cell { font-weight: 600; color: #303133; }
+.muted-cell { color: #c0c4cc; display: inline-block; min-height: 20px; }
 .img-cell { display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .img-actions { display: flex; gap: 2px; flex-wrap: wrap; justify-content: center; }
 .img-url-box { display: flex; flex-direction: column; gap: 6px; }

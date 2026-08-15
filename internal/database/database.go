@@ -35,6 +35,7 @@ func Connect(cfg *config.DatabaseConfig) (*gorm.DB, error) {
 func AutoMigrate(db *gorm.DB) error {
 	if err := db.AutoMigrate(
 		&model.QuoteTemplate{},
+		&model.QuoteTemplateLine{},
 		&model.Quote{},
 		&model.QuoteItem{},
 	); err != nil {
@@ -45,6 +46,7 @@ func AutoMigrate(db *gorm.DB) error {
 			CREATE INDEX IF NOT EXISTS idx_quotes_tenant_status ON quotes (tenant_id, status);
 			CREATE INDEX IF NOT EXISTS idx_quotes_tenant_no ON quotes (tenant_id, quote_no);
 			CREATE INDEX IF NOT EXISTS idx_quote_items_quote ON quote_items (quote_id, sort);
+			CREATE INDEX IF NOT EXISTS idx_quote_template_lines_tpl ON quote_template_lines (template_id, sort);
 		`).Error
 	}
 	return nil

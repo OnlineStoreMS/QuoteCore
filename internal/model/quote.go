@@ -7,20 +7,27 @@ import (
 )
 
 const (
-	QuoteStatusDraft     int8 = 1
-	QuoteStatusSent      int8 = 2
-	QuoteStatusWon       int8 = 3
-	QuoteStatusVoid      int8 = 4
+	QuoteStatusDraft int8 = 1
+	QuoteStatusSent  int8 = 2
+	QuoteStatusWon   int8 = 3
+	QuoteStatusVoid   int8 = 4
 
-	ItemSourceProduct = "product"
-	ItemSourceManual  = "manual"
+	ItemSourceProduct  = "product"
+	ItemSourceManual   = "manual"
+	ItemSourceTemplate = "template"
+
+	// TemplateKindLayout: 仅版式（店名/Logo）
+	TemplateKindLayout = "layout"
+	// TemplateKindSkeleton: 组车/组合报价骨架（产品+配件固定行）
+	TemplateKindSkeleton = "skeleton"
 )
 
-// QuoteTemplate is a printable quote layout config (logo / shop info are local, not StoreCore-bound).
+// QuoteTemplate is printable layout + optional line skeleton (组装车等).
 type QuoteTemplate struct {
 	ID              uint64         `gorm:"primaryKey" json:"id"`
 	TenantID        uint64         `gorm:"index;not null;default:1" json:"tenantId"`
 	Name            string         `gorm:"size:128;not null" json:"name"`
+	Kind            string         `gorm:"size:16;not null;default:layout" json:"kind"` // layout | skeleton
 	IsDefault       bool           `gorm:"not null;default:false" json:"isDefault"`
 	LogoURL         string         `gorm:"size:512" json:"logoUrl"`
 	ShopName        string         `gorm:"size:128" json:"shopName"`
@@ -34,13 +41,31 @@ type QuoteTemplate struct {
 	ShowUpgrade     bool           `gorm:"not null;default:true" json:"showUpgrade"`
 	ShowParams      bool           `gorm:"not null;default:true" json:"showParams"`
 	ShowTotals      bool           `gorm:"not null;default:true" json:"showTotals"`
-	StylePreset     string         `gorm:"size:32;not null;default:compare" json:"stylePreset"` // simple | compare
+	StylePreset     string         `gorm:"size:32;not null;default:compare" json:"stylePreset"`
 	CreatedAt       time.Time      `json:"createdAt"`
 	UpdatedAt       time.Time      `json:"updatedAt"`
 	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
+
+	Lines []QuoteTemplateLine `gorm:"foreignKey:TemplateID" json:"lines,omitempty"`
 }
 
 func (QuoteTemplate) TableName() string { return "quote_templates" }
+
+// QuoteTemplateLine is a fixed skeleton row: 产品(category) + 配件(partName).
+type QuoteTemplateLine struct {
+	ID         uint64         `gorm:"primaryKey" json:"id"`
+	TenantID   uint64         `gorm:"index;not null;default:1" json:"tenantId"`
+	TemplateID uint64         `gorm:"index;not null" json:"templateId"`
+	Sort       int            `gorm:"not null;default:0" json:"sort"`
+	Category   string         `gorm:"size:128" json:"category"` // 产品/产品组，如「车架组」
+	PartName   string         `gorm:"size:128;not null" json:"partName"` // 配件，如「车架」「前叉」
+	Hint       string         `gorm:"size:255" json:"hint"`             // 填写提示
+	CreatedAt  time.Time      `json:"createdAt"`
+	UpdatedAt  time.Time      `json:"updatedAt"`
+	DeletedAt  gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+func (QuoteTemplateLine) TableName() string { return "quote_template_lines" }
 
 type Quote struct {
 	ID           uint64         `gorm:"primaryKey" json:"id"`
@@ -73,27 +98,30 @@ type Quote struct {
 func (Quote) TableName() string { return "quotes" }
 
 type QuoteItem struct {
-	ID           uint64         `gorm:"primaryKey" json:"id"`
-	TenantID     uint64         `gorm:"index;not null;default:1" json:"tenantId"`
-	QuoteID      uint64         `gorm:"index;not null" json:"quoteId"`
-	Sort         int            `gorm:"not null;default:0" json:"sort"`
-	Source       string         `gorm:"size:16;not null;default:manual" json:"source"`
-	ProductID    *uint64        `json:"productId"`
-	SkuID        *uint64        `json:"skuId"`
-	Name         string         `gorm:"size:255;not null" json:"name"`
-	SpecLabel    string         `gorm:"size:255" json:"specLabel"`
-	ImageURL     string         `gorm:"size:512" json:"imageUrl"`
-	Qty          float64        `gorm:"type:decimal(12,2);not null;default:1" json:"qty"`
-	Unit         string         `gorm:"size:16;not null;default:件" json:"unit"`
-	RetailPrice  float64        `gorm:"type:decimal(12,2);not null;default:0" json:"retailPrice"`
-	QuotePrice   float64        `gorm:"type:decimal(12,2);not null;default:0" json:"quotePrice"`
-	LineTotal    float64        `gorm:"type:decimal(12,2);not null;default:0" json:"lineTotal"`
-	UpgradeNote  string         `gorm:"size:512" json:"upgradeNote"`
-	ParamsText   string         `gorm:"type:text" json:"paramsText"`
-	Remark       string         `gorm:"size:512" json:"remark"`
-	CreatedAt    time.Time      `json:"createdAt"`
-	UpdatedAt    time.Time      `json:"updatedAt"`
-	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
+	ID             uint64         `gorm:"primaryKey" json:"id"`
+	TenantID       uint64         `gorm:"index;not null;default:1" json:"tenantId"`
+	QuoteID        uint64         `gorm:"index;not null" json:"quoteId"`
+	Sort           int            `gorm:"not null;default:0" json:"sort"`
+	Source         string         `gorm:"size:16;not null;default:manual" json:"source"`
+	ProductID      *uint64        `json:"productId"`
+	SkuID          *uint64        `json:"skuId"`
+	TemplateLineID *uint64        `json:"templateLineId"`
+	Category       string         `gorm:"size:128" json:"category"` // 产品/产品组
+	PartName       string         `gorm:"size:128" json:"partName"` // 配件
+	Name           string         `gorm:"size:255;not null;default:''" json:"name"` // 具体名称
+	SpecLabel      string         `gorm:"size:255" json:"specLabel"`
+	ImageURL       string         `gorm:"size:512" json:"imageUrl"`
+	Qty            float64        `gorm:"type:decimal(12,2);not null;default:1" json:"qty"`
+	Unit           string         `gorm:"size:16;not null;default:件" json:"unit"`
+	RetailPrice    float64        `gorm:"type:decimal(12,2);not null;default:0" json:"retailPrice"`
+	QuotePrice     float64        `gorm:"type:decimal(12,2);not null;default:0" json:"quotePrice"`
+	LineTotal      float64        `gorm:"type:decimal(12,2);not null;default:0" json:"lineTotal"`
+	UpgradeNote    string         `gorm:"size:512" json:"upgradeNote"`
+	ParamsText     string         `gorm:"type:text" json:"paramsText"`
+	Remark         string         `gorm:"size:512" json:"remark"`
+	CreatedAt      time.Time      `json:"createdAt"`
+	UpdatedAt      time.Time      `json:"updatedAt"`
+	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 func (QuoteItem) TableName() string { return "quote_items" }
