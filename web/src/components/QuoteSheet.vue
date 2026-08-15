@@ -131,17 +131,17 @@ function isProductHead(idx: number): boolean {
 }
 .head { display: flex; justify-content: space-between; gap: 16px; border-bottom: 2px solid #1f2329; padding-bottom: 12px; }
 .brand { display: flex; gap: 12px; align-items: center; }
-.logo { width: 56px; height: 56px; object-fit: contain; }
+.logo { width: 56px; height: 56px; object-fit: contain; display: block; }
 .shop { font-size: 18px; font-weight: 700; }
 .sub { color: #646a73; }
 .meta { text-align: right; }
 .title { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
 .party { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; margin: 14px 0; }
 .party .full { grid-column: 1 / -1; }
-.items { width: 100%; border-collapse: collapse; }
+.items { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .items th, .items td { border: 1px solid #d0d3d6; padding: 6px 8px; vertical-align: top; }
 .items th { background: #f5f6f7; text-align: left; }
-.thumb { width: 40px; height: 40px; object-fit: cover; border-radius: 4px; }
+.thumb { width: 40px; height: 40px; max-width: 40px; max-height: 40px; object-fit: cover; border-radius: 4px; display: block; }
 .name { font-weight: 600; }
 .muted { color: #8f959e; font-size: 11px; margin-top: 2px; }
 .empty { text-align: center; color: #8f959e; padding: 24px !important; }

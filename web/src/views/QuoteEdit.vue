@@ -30,6 +30,15 @@ const templates = ref<QuoteTemplate[]>([])
 const activeTemplate = ref<QuoteTemplate | null>(null)
 const previewRef = ref<HTMLElement | null>(null)
 const showPreview = ref(false)
+const imagePreviewUrl = ref('')
+const showImagePreview = ref(false)
+
+function openImagePreview(url?: string) {
+  const u = (url || '').trim()
+  if (!u) return
+  imagePreviewUrl.value = u
+  showImagePreview.value = true
+}
 const skuDrawer = ref(false)
 const custDrawer = ref(false)
 const skuKeyword = ref('')
@@ -464,7 +473,15 @@ onMounted(async () => {
             <el-table-column label="图" width="112">
               <template #default="{ row, $index }">
                 <div class="img-cell">
-                  <el-image v-if="row.imageUrl" :src="row.imageUrl" style="width:36px;height:36px" fit="cover" :preview-src-list="[row.imageUrl]" />
+                  <button
+                    v-if="row.imageUrl"
+                    type="button"
+                    class="thumb-btn"
+                    title="预览图片"
+                    @click="openImagePreview(row.imageUrl)"
+                  >
+                    <img :src="row.imageUrl" alt="" class="thumb" />
+                  </button>
                   <div class="img-actions">
                     <el-upload :show-file-list="false" :http-request="(o:any) => uploadRowImage($index, o)" accept="image/*">
                       <el-button link type="primary">上传</el-button>
@@ -551,7 +568,9 @@ onMounted(async () => {
       </div>
       <el-table :data="skuHits" size="small" @row-click="pickSku">
         <el-table-column label="图" width="56">
-          <template #default="{ row }"><el-image :src="row.pic || row.productPic" style="width:36px;height:36px" fit="cover" /></template>
+          <template #default="{ row }">
+            <img v-if="row.pic || row.productPic" :src="row.pic || row.productPic" class="sku-thumb" alt="" />
+          </template>
         </el-table-column>
         <el-table-column prop="productName" label="商品" min-width="140" />
         <el-table-column prop="specLabel" label="规格" min-width="120" />
@@ -572,9 +591,17 @@ onMounted(async () => {
       </el-table>
     </el-drawer>
 
-    <el-dialog v-model="showPreview" title="报价预览" width="860px" top="4vh" destroy-on-close>
+    <el-dialog
+      v-model="showPreview"
+      title="报价预览"
+      width="860px"
+      top="4vh"
+      append-to-body
+      destroy-on-close
+      class="quote-preview-dialog"
+    >
       <div class="preview-wrap">
-        <div ref="previewRef">
+        <div ref="previewRef" class="preview-sheet-host">
           <QuoteSheet :quote="previewQuote" :template="activeTemplate" />
         </div>
       </div>
@@ -582,6 +609,21 @@ onMounted(async () => {
         <el-button @click="doCopyImage">复制图片</el-button>
         <el-button type="primary" @click="doDownloadPdf">下载 PDF</el-button>
       </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="showImagePreview"
+      title="图片预览"
+      width="auto"
+      append-to-body
+      align-center
+      destroy-on-close
+      class="image-preview-dialog"
+      @closed="imagePreviewUrl = ''"
+    >
+      <div class="image-preview-body">
+        <img v-if="imagePreviewUrl" :src="imagePreviewUrl" alt="预览" />
+      </div>
     </el-dialog>
   </div>
 </template>
@@ -596,10 +638,45 @@ onMounted(async () => {
 .img-actions { display: flex; gap: 2px; flex-wrap: wrap; justify-content: center; }
 .img-url-box { display: flex; flex-direction: column; gap: 6px; }
 .img-url-tip { font-size: 12px; color: #8f959e; }
+.thumb-btn {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+  line-height: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  width: 36px;
+  height: 36px;
+}
+.thumb {
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  display: block;
+}
 .sum { margin-top: 8px; text-align: right; line-height: 1.8; }
 .grand { font-size: 18px; font-weight: 700; }
 .drawer-search { display: flex; gap: 8px; margin-bottom: 12px; }
 .drawer-hint { margin: 0 0 10px; color: #8f959e; font-size: 12px; line-height: 1.5; }
 .spec-cont { color: #8f959e; font-size: 12px; padding: 0 4px; }
 .preview-wrap { overflow: auto; max-height: 70vh; background: #eef0f3; padding: 16px; display: flex; justify-content: center; }
+.preview-sheet-host { flex: 0 0 auto; max-width: 100%; }
+.sku-thumb { width: 36px; height: 36px; object-fit: cover; border-radius: 4px; display: block; }
+.image-preview-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: min(90vw, 960px);
+  max-height: 80vh;
+  overflow: auto;
+}
+.image-preview-body img {
+  max-width: 100%;
+  max-height: 80vh;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: block;
+}
 </style>
