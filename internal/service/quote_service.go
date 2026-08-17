@@ -1,6 +1,8 @@
 package service
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -396,6 +398,15 @@ func buildItems(tenantID, quoteID uint64, reqs []dto.QuoteItemReq) ([]model.Quot
 		if sort == 0 {
 			sort = (i + 1) * 10
 		}
+		var supplyAt *time.Time
+		if r.SupplyPriceAt != nil && strings.TrimSpace(*r.SupplyPriceAt) != "" {
+			raw := strings.TrimSpace(*r.SupplyPriceAt)
+			if t, err := time.Parse(time.RFC3339, raw); err == nil {
+				supplyAt = &t
+			} else if t, err := time.ParseInLocation("2006-01-02 15:04:05", raw, time.Local); err == nil {
+				supplyAt = &t
+			}
+		}
 		items = append(items, model.QuoteItem{
 			TenantID:       tenantID,
 			QuoteID:        quoteID,
@@ -413,6 +424,9 @@ func buildItems(tenantID, quoteID uint64, reqs []dto.QuoteItemReq) ([]model.Quot
 			Unit:           unit,
 			RetailPrice:    round2(r.RetailPrice),
 			CostPrice:      round2(r.CostPrice),
+			SupplyPrice:    round2(r.SupplyPrice),
+			SupplyPriceAt:  supplyAt,
+			SupplyRemark:   strings.TrimSpace(r.SupplyRemark),
 			QuotePrice:     round2(r.QuotePrice),
 			LineTotal:      lineTotal,
 			UpgradeNote:    strings.TrimSpace(r.UpgradeNote),
@@ -522,22 +536,25 @@ func (s *QuoteService) SaveQuote(tenantID, userID, id uint64, req dto.QuoteSaveR
 			if err := tx.Create(&quote).Error; err != nil {
 				return err
 			}
+			for i := range items {
+				items[i].QuoteID = quote.ID
+				items[i].TenantID = tenantID
+				items[i].ID = 0
+			}
+			if len(items) > 0 {
+				if err := tx.Create(&items).Error; err != nil {
+					return err
+				}
+			}
 		} else {
 			if err := tx.Save(&quote).Error; err != nil {
 				return err
 			}
-			if err := tx.Where("quote_id = ?", quote.ID).Delete(&model.QuoteItem{}).Error; err != nil {
+			synced, err := syncQuoteItems(tx, tenantID, quote.ID, req.Items)
+			if err != nil {
 				return err
 			}
-		}
-		for i := range items {
-			items[i].QuoteID = quote.ID
-			items[i].TenantID = tenantID
-		}
-		if len(items) > 0 {
-			if err := tx.Create(&items).Error; err != nil {
-				return err
-			}
+			items = synced
 		}
 		quote.Items = items
 		return nil
@@ -546,6 +563,64 @@ func (s *QuoteService) SaveQuote(tenantID, userID, id uint64, req dto.QuoteSaveR
 		return nil, err
 	}
 	return s.GetQuote(tenantID, quote.ID)
+}
+
+// syncQuoteItems updates existing rows by id (保留供货商拿货价关联的行 id)，新建无 id 行，删除未提交行。
+func syncQuoteItems(tx *gorm.DB, tenantID, quoteID uint64, reqs []dto.QuoteItemReq) ([]model.QuoteItem, error) {
+	var existing []model.QuoteItem
+	if err := tx.Where("quote_id = ?", quoteID).Find(&existing).Error; err != nil {
+		return nil, err
+	}
+	existMap := make(map[uint64]model.QuoteItem, len(existing))
+	for _, e := range existing {
+		existMap[e.ID] = e
+	}
+	built, _, err := buildItems(tenantID, quoteID, reqs)
+	if err != nil {
+		return nil, err
+	}
+	keep := make(map[uint64]bool)
+	out := make([]model.QuoteItem, 0, len(built))
+	for i := range built {
+		it := built[i]
+		it.QuoteID = quoteID
+		it.TenantID = tenantID
+		reqID := uint64(0)
+		if i < len(reqs) && reqs[i].ID != nil {
+			reqID = *reqs[i].ID
+		}
+		if reqID > 0 {
+			if old, ok := existMap[reqID]; ok {
+				it.ID = old.ID
+				// 前端未带回拿货价时间戳时，保留库中供货商填写结果，避免自动保存冲掉
+				if reqs[i].SupplyPriceAt == nil {
+					it.SupplyPrice = old.SupplyPrice
+					it.SupplyPriceAt = old.SupplyPriceAt
+					it.SupplyRemark = old.SupplyRemark
+				}
+				if err := tx.Save(&it).Error; err != nil {
+					return nil, err
+				}
+				keep[it.ID] = true
+				out = append(out, it)
+				continue
+			}
+		}
+		it.ID = 0
+		if err := tx.Create(&it).Error; err != nil {
+			return nil, err
+		}
+		keep[it.ID] = true
+		out = append(out, it)
+	}
+	for id := range existMap {
+		if !keep[id] {
+			if err := tx.Delete(&model.QuoteItem{}, id).Error; err != nil {
+				return nil, err
+			}
+		}
+	}
+	return out, nil
 }
 
 func (s *QuoteService) DeleteQuote(tenantID, id uint64) error {
@@ -598,11 +673,17 @@ func (s *QuoteService) CopyQuote(tenantID, userID, id uint64) (*model.Quote, err
 			Unit:           it.Unit,
 			RetailPrice:    it.RetailPrice,
 			CostPrice:      it.CostPrice,
+			SupplyPrice:    it.SupplyPrice,
+			SupplyRemark:   it.SupplyRemark,
 			QuotePrice:     it.QuotePrice,
 			UpgradeNote:    it.UpgradeNote,
 			ParamsText:     it.ParamsText,
 			Remark:         it.Remark,
 		})
+		if it.SupplyPriceAt != nil {
+			v := it.SupplyPriceAt.Format(time.RFC3339)
+			items[len(items)-1].SupplyPriceAt = &v
+		}
 	}
 	var valid *string
 	if src.ValidUntil != nil {
@@ -625,5 +706,152 @@ func (s *QuoteService) CopyQuote(tenantID, userID, id uint64) (*model.Quote, err
 		TaxAmt:       src.TaxAmt,
 		TemplateID:   src.TemplateID,
 		Items:        items,
+	})
+}
+
+func randomShareToken() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// EnsureShareToken creates a share token if missing and returns the quote.
+func (s *QuoteService) EnsureShareToken(tenantID, id uint64) (*model.Quote, error) {
+	q, err := s.GetQuote(tenantID, id)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(q.ShareToken) != "" {
+		return q, nil
+	}
+	tok, err := randomShareToken()
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repos.DB.Model(&model.Quote{}).Where("id = ? AND tenant_id = ?", id, repo.NormalizeTenantID(tenantID)).
+		Update("share_token", tok).Error; err != nil {
+		return nil, err
+	}
+	q.ShareToken = tok
+	return q, nil
+}
+
+type ShareQuoteView struct {
+	Title   string          `json:"title"`
+	QuoteNo string          `json:"quoteNo"`
+	Remark  string          `json:"remark"`
+	Items   []ShareItemView `json:"items"`
+}
+
+type ShareItemView struct {
+	ID           uint64  `json:"id"`
+	Sort         int     `json:"sort"`
+	Category     string  `json:"category"`
+	PartName     string  `json:"partName"`
+	Name         string  `json:"name"`
+	SpecLabel    string  `json:"specLabel"`
+	ImageURL     string  `json:"imageUrl"`
+	SupplyPrice  float64 `json:"supplyPrice"`
+	SupplyRemark string  `json:"supplyRemark"`
+}
+
+type SupplyPriceSubmitItem struct {
+	ID           uint64  `json:"id"`
+	SupplyPrice  float64 `json:"supplyPrice"`
+	SupplyRemark string  `json:"supplyRemark"`
+}
+
+func (s *QuoteService) GetShareByToken(token string) (*ShareQuoteView, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, ErrNotFound
+	}
+	var q model.Quote
+	err := s.repos.DB.Where("share_token = ?", token).Preload("Items", func(db *gorm.DB) *gorm.DB {
+		return db.Order("sort ASC, id ASC")
+	}).First(&q).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if q.Status == model.QuoteStatusVoid {
+		return nil, fmt.Errorf("%w: 报价单已作废", ErrBadRequest)
+	}
+	view := &ShareQuoteView{
+		Title:   q.Title,
+		QuoteNo: q.QuoteNo,
+		Remark:  q.Remark,
+		Items:   make([]ShareItemView, 0, len(q.Items)),
+	}
+	for _, it := range q.Items {
+		view.Items = append(view.Items, ShareItemView{
+			ID:           it.ID,
+			Sort:         it.Sort,
+			Category:     it.Category,
+			PartName:     it.PartName,
+			Name:         it.Name,
+			SpecLabel:    it.SpecLabel,
+			ImageURL:     it.ImageURL,
+			SupplyPrice:  it.SupplyPrice,
+			SupplyRemark: it.SupplyRemark,
+		})
+	}
+	return view, nil
+}
+
+func (s *QuoteService) SubmitSupplyPrices(token string, rows []SupplyPriceSubmitItem) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return ErrNotFound
+	}
+	var q model.Quote
+	err := s.repos.DB.Where("share_token = ?", token).First(&q).Error
+	if err == gorm.ErrRecordNotFound {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if q.Status == model.QuoteStatusVoid {
+		return fmt.Errorf("%w: 报价单已作废", ErrBadRequest)
+	}
+	if len(rows) == 0 {
+		return fmt.Errorf("%w: 请填写至少一行拿货价", ErrBadRequest)
+	}
+	now := time.Now()
+	return s.repos.DB.Transaction(func(tx *gorm.DB) error {
+		updated := 0
+		for _, row := range rows {
+			if row.ID == 0 {
+				continue
+			}
+			price := round2(row.SupplyPrice)
+			if price < 0 {
+				return fmt.Errorf("%w: 拿货价不能为负", ErrBadRequest)
+			}
+			res := tx.Model(&model.QuoteItem{}).
+				Where("id = ? AND quote_id = ? AND deleted_at IS NULL", row.ID, q.ID).
+				Updates(map[string]any{
+					"supply_price":    price,
+					"supply_price_at": now,
+					"supply_remark":   strings.TrimSpace(row.SupplyRemark),
+					"updated_at":      now,
+				})
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected == 0 {
+				return fmt.Errorf("%w: 明细不存在 id=%d", ErrBadRequest, row.ID)
+			}
+			updated++
+		}
+		if updated == 0 {
+			return fmt.Errorf("%w: 请填写至少一行拿货价", ErrBadRequest)
+		}
+		return nil
 	})
 }

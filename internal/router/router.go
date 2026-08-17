@@ -55,6 +55,11 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	adminGroup.POST("/upload", uploadH.Upload)
 	adminGroup.POST("/upload/from-url", uploadH.UploadFromURL)
 
+	pub := admin.NewPublicHandlers(svc)
+	publicGroup := v1.Group("/public")
+	publicGroup.GET("/share/:token", pub.GetShare)
+	publicGroup.POST("/share/:token/submit", pub.SubmitSupply)
+
 	return r
 }
 

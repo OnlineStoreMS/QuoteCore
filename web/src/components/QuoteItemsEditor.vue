@@ -244,6 +244,14 @@ function openImage(url?: string) {
   if (!u) return
   emit('previewImage', u)
 }
+
+function formatSupplyAt(raw?: string | null) {
+  if (!raw) return ''
+  const d = new Date(raw)
+  if (Number.isNaN(d.getTime())) return String(raw)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
 </script>
 
 <template>
@@ -356,7 +364,22 @@ function openImage(url?: string) {
       </el-table-column>
       <el-table-column label="成本价" :width="large ? 130 : 110">
         <template #default="{ row }">
-          <el-input v-model.number="row.costPrice" inputmode="decimal" placeholder="拿货价" />
+          <el-input v-model.number="row.costPrice" inputmode="decimal" placeholder="0.00" />
+        </template>
+      </el-table-column>
+      <el-table-column label="拿货价" :width="large ? 150 : 128">
+        <template #default="{ row }">
+          <div v-if="row.supplyPriceAt" class="supply-cell">
+            <div class="supply-price">¥{{ Number(row.supplyPrice || 0).toFixed(2) }}</div>
+            <div class="supply-at">{{ formatSupplyAt(row.supplyPriceAt) }}</div>
+          </div>
+          <span v-else class="muted-cell">待供货商填</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="供货商备注" :min-width="large ? 160 : 120">
+        <template #default="{ row }">
+          <span v-if="(row.supplyRemark || '').trim()" class="supply-remark">{{ row.supplyRemark }}</span>
+          <span v-else class="muted-cell">—</span>
         </template>
       </el-table-column>
       <el-table-column v-if="!skeleton" label="小计" :width="large ? 110 : 90" align="right">
@@ -411,4 +434,8 @@ function openImage(url?: string) {
 }
 .large .thumb-btn { width: 56px; height: 56px; }
 .thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
+.supply-cell { line-height: 1.25; }
+.supply-price { font-weight: 600; color: #2f5d43; }
+.supply-at { font-size: 11px; color: #8f959e; margin-top: 2px; }
+.supply-remark { white-space: pre-wrap; font-size: 13px; color: #303133; }
 </style>

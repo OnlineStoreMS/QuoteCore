@@ -5,6 +5,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import QuoteSheet from '../components/QuoteSheet.vue'
 import QuoteItemsEditor from '../components/QuoteItemsEditor.vue'
 import {
+  effectiveCostPrice,
+  ensureShareToken,
   getQuote,
   isSkeletonTemplate,
   listTemplates,
@@ -31,8 +33,16 @@ const saving = ref(false)
 const autoSaveReady = ref(false)
 const autoSaveStatus = ref<'idle' | 'pending' | 'saving' | 'saved' | 'error'>('idle')
 const lastSavedAt = ref('')
-let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
 let persistLock = false
+/** 用户有未落库的改动 */
+let formDirty = false
+let dirtyGen = 0
+/** 保存进行中又改了，结束后再存一次 */
+let saveAgain = false
+/** 应用服务端回写时跳过 watch */
+let suppressAutoSave = false
+/** 中文输入法选词中，失焦暂不保存 */
+let imeComposing = false
 const templates = ref<QuoteTemplate[]>([])
 const activeTemplate = ref<QuoteTemplate | null>(null)
 const previewRef = ref<HTMLElement | null>(null)
@@ -117,12 +127,16 @@ const retailTotal = computed(() =>
   Math.round(form.items.reduce((s, it) => s + Number(it.qty || 0) * Number(it.retailPrice || 0), 0) * 100) / 100,
 )
 const costTotal = computed(() =>
-  Math.round(form.items.reduce((s, it) => s + Number(it.qty || 0) * Number(it.costPrice || 0), 0) * 100) / 100,
+  Math.round(
+    form.items.reduce((s, it) => s + Number(it.qty || 0) * effectiveCostPrice(it), 0) * 100,
+  ) / 100,
 )
 const total = computed(() =>
   Math.round((subtotal.value - Number(form.discountAmt || 0) + Number(form.shippingAmt || 0) + Number(form.taxAmt || 0)) * 100) / 100,
 )
-const profit = computed(() => Math.round((total.value - costTotal.value) * 100) / 100)
+const profit = computed(() =>
+  Math.round((total.value - Number(form.shippingAmt || 0) - costTotal.value) * 100) / 100,
+)
 
 function emptyItem(partial?: Partial<QuoteItem>): QuoteItem {
   return {
@@ -297,6 +311,7 @@ async function loadQuote() {
     form.taxAmt = q.taxAmt || 0
     form.quoteNo = q.quoteNo || ''
     form.items = (q.items || []).map((it, i) => ({
+      id: it.id,
       sort: it.sort || (i + 1) * 10,
       source: it.source || 'manual',
       productId: it.productId,
@@ -311,6 +326,9 @@ async function loadQuote() {
       unit: it.unit || '件',
       retailPrice: it.retailPrice || 0,
       costPrice: it.costPrice || 0,
+      supplyPrice: it.supplyPrice || 0,
+      supplyPriceAt: it.supplyPriceAt || null,
+      supplyRemark: it.supplyRemark || '',
       quotePrice: it.quotePrice || 0,
       upgradeNote: it.upgradeNote || '',
       paramsText: it.paramsText || '',
@@ -369,11 +387,57 @@ function buildSavePayload() {
   }
 }
 
-async function onSave(silent = false) {
-  if (autoSaveTimer) {
-    clearTimeout(autoSaveTimer)
-    autoSaveTimer = null
+function mapSavedItem(it: QuoteItem, i: number): QuoteItem {
+  return {
+    id: it.id,
+    sort: it.sort || (i + 1) * 10,
+    source: it.source || 'manual',
+    productId: it.productId,
+    skuId: it.skuId,
+    templateLineId: it.templateLineId,
+    category: it.category || '',
+    partName: it.partName || '',
+    name: it.name,
+    specLabel: it.specLabel || '',
+    imageUrl: it.imageUrl || '',
+    qty: it.qty || 1,
+    unit: it.unit || '件',
+    retailPrice: it.retailPrice || 0,
+    costPrice: it.costPrice || 0,
+    supplyPrice: it.supplyPrice || 0,
+    supplyPriceAt: it.supplyPriceAt || null,
+    supplyRemark: it.supplyRemark || '',
+    quotePrice: it.quotePrice || 0,
+    upgradeNote: it.upgradeNote || '',
+    paramsText: it.paramsText || '',
+    remark: it.remark || '',
   }
+}
+
+/** 静默保存只回填 id / 拿货价，不整表替换，避免打断正在输入 */
+function patchItemsFromSaved(savedItems: QuoteItem[]) {
+  suppressAutoSave = true
+  try {
+    const n = Math.min(form.items.length, savedItems.length)
+    for (let i = 0; i < n; i++) {
+      const cur = form.items[i]
+      const sv = savedItems[i]
+      if (sv.id && cur.id !== sv.id) cur.id = sv.id
+      if (sv.supplyPriceAt) {
+        cur.supplyPrice = sv.supplyPrice || 0
+        cur.supplyPriceAt = sv.supplyPriceAt
+        cur.supplyRemark = sv.supplyRemark || ''
+      }
+    }
+  } finally {
+    nextTick(() => {
+      suppressAutoSave = false
+    })
+  }
+}
+
+async function onSave(silent = false) {
+  if (silent && imeComposing) return
   if (!form.items.length) {
     if (!silent) ElMessage.warning('请至少添加一行明细')
     return
@@ -383,26 +447,39 @@ async function onSave(silent = false) {
     return
   }
   if (persistLock || saving.value) {
-    if (silent) {
-      // 正在保存时再排队一次
-      scheduleAutoSave()
-    }
+    if (silent) saveAgain = true
     return
   }
   persistLock = true
   saving.value = true
   if (silent) autoSaveStatus.value = 'saving'
+  const saveGen = dirtyGen
   try {
     const wasNew = !quoteId.value
     const saved = await saveQuote(buildSavePayload(), quoteId.value || undefined)
     form.quoteNo = saved.quoteNo
-    autoSaveStatus.value = 'saved'
-    lastSavedAt.value = new Date().toLocaleTimeString()
+    if (saved.items?.length) {
+      if (silent && !wasNew) {
+        patchItemsFromSaved(saved.items)
+      } else {
+        suppressAutoSave = true
+        form.items = saved.items.map((it, i) => mapSavedItem(it, i))
+        await nextTick()
+        suppressAutoSave = false
+      }
+    }
+    if (dirtyGen === saveGen) {
+      formDirty = false
+      autoSaveStatus.value = 'saved'
+      lastSavedAt.value = new Date().toLocaleTimeString()
+    } else {
+      formDirty = true
+      autoSaveStatus.value = 'pending'
+    }
     if (!silent) ElMessage.success('已保存')
     if (wasNew) {
       autoSaveReady.value = false
       await router.replace(`/quotes/${saved.id}`)
-      // 路由切换后组件会重建；若同页不重建则重新打开自动保存
       await nextTick()
       autoSaveReady.value = true
     }
@@ -412,25 +489,34 @@ async function onSave(silent = false) {
   } finally {
     saving.value = false
     persistLock = false
+    if (saveAgain && formDirty) {
+      saveAgain = false
+      void onSave(true)
+    } else {
+      saveAgain = false
+    }
   }
 }
 
-function scheduleAutoSave() {
-  if (!autoSaveReady.value || loading.value) return
-  if (!canPersistItems()) {
-    autoSaveStatus.value = 'idle'
-    return
-  }
-  autoSaveStatus.value = 'pending'
-  if (autoSaveTimer) clearTimeout(autoSaveTimer)
-  autoSaveTimer = setTimeout(() => {
-    autoSaveTimer = null
+function onEditorCompositionStart() {
+  imeComposing = true
+}
+
+function onEditorCompositionEnd() {
+  imeComposing = false
+}
+
+/** 离开输入框后自动保存（不做定时轮询） */
+function onEditorFocusOut() {
+  if (!formDirty || !autoSaveReady.value || loading.value || suppressAutoSave) return
+  queueMicrotask(() => {
+    if (imeComposing || !formDirty || !autoSaveReady.value || loading.value) return
     void onSave(true)
-  }, 1600)
+  })
 }
 
 const autoSaveHint = computed(() => {
-  if (autoSaveStatus.value === 'pending') return '待自动保存…'
+  if (autoSaveStatus.value === 'pending') return '有改动，离开输入框后自动保存'
   if (autoSaveStatus.value === 'saving') return '自动保存中…'
   if (autoSaveStatus.value === 'saved') return lastSavedAt.value ? `已自动保存 ${lastSavedAt.value}` : '已自动保存'
   if (autoSaveStatus.value === 'error') return '自动保存失败'
@@ -440,8 +526,10 @@ const autoSaveHint = computed(() => {
 watch(
   () => form,
   () => {
-    if (!autoSaveReady.value || loading.value) return
-    scheduleAutoSave()
+    if (!autoSaveReady.value || loading.value || suppressAutoSave) return
+    formDirty = true
+    dirtyGen += 1
+    autoSaveStatus.value = 'pending'
   },
   { deep: true },
 )
@@ -557,6 +645,45 @@ async function doDownloadPdf() {
   }
 }
 
+const sharing = ref(false)
+
+async function shareToSupplier() {
+  if (!quoteId.value) {
+    ElMessage.warning('请先保存报价单后再分享')
+    return
+  }
+  sharing.value = true
+  try {
+    // 先保存，确保明细 id 稳定，供货商提交能对上
+    if (canPersistItems()) {
+      await onSave(true)
+    }
+    const data = await ensureShareToken(quoteId.value)
+    const base = (import.meta.env.BASE_URL || '/').replace(/\/?$/, '/')
+    const url = `${window.location.origin}${base}share/${data.shareToken}`
+    const title = (form.title || '').trim() || '报价单'
+    const quoteNo = (form.quoteNo || data.quoteNo || '').trim()
+    const text = [
+      '您好，',
+      `麻烦看一下报价单「${title}」${quoteNo ? `（${quoteNo}）` : ''}的拿货价。`,
+      url,
+    ].join('\n')
+    try {
+      await navigator.clipboard.writeText(text)
+      ElMessage.success('分享文案已复制，可直接发给供货商')
+    } catch {
+      await ElMessageBox.alert(text, '请复制分享内容', {
+        confirmButtonText: '知道了',
+        customClass: 'share-copy-box',
+      })
+    }
+  } catch (e) {
+    ElMessage.error((e as Error).message || '生成分享链接失败')
+  } finally {
+    sharing.value = false
+  }
+}
+
 onMounted(async () => {
   autoSaveReady.value = false
   try {
@@ -574,15 +701,17 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   autoSaveReady.value = false
-  if (autoSaveTimer) {
-    clearTimeout(autoSaveTimer)
-    autoSaveTimer = null
-  }
 })
 </script>
 
 <template>
-  <div v-loading="loading" class="edit">
+  <div
+    v-loading="loading"
+    class="edit"
+    @compositionstart.capture="onEditorCompositionStart"
+    @compositionend.capture="onEditorCompositionEnd"
+    @focusout.capture="onEditorFocusOut"
+  >
     <div class="topbar">
       <div class="left">
         <el-button @click="router.push('/quotes')">返回</el-button>
@@ -590,6 +719,7 @@ onBeforeUnmount(() => {
         <span v-if="autoSaveHint" class="autosave-hint" :class="autoSaveStatus">{{ autoSaveHint }}</span>
       </div>
       <div class="right">
+        <el-button :loading="sharing" :disabled="!quoteId" @click="shareToSupplier">分享给供货商</el-button>
         <el-button :loading="exporting" @click="showPreview = true">预览</el-button>
         <el-button :loading="exporting" @click="doCopyImage">复制图片</el-button>
         <el-button :loading="exporting" @click="doDownloadPng">下载 PNG</el-button>
@@ -682,7 +812,7 @@ onBeforeUnmount(() => {
           </el-form>
           <div class="sum">
             <div>零售价合计：¥{{ retailTotal.toFixed(2) }}</div>
-            <div>成本合计：¥{{ costTotal.toFixed(2) }}</div>
+            <div>成本合计：¥{{ costTotal.toFixed(2) }} <span class="sum-tip">有拿货价时按拿货价</span></div>
             <div>报价小计：¥{{ subtotal.toFixed(2) }}</div>
             <div class="profit">预估利润：¥{{ profit.toFixed(2) }}</div>
             <div class="grand">合计：¥{{ total.toFixed(2) }}</div>
@@ -814,6 +944,7 @@ onBeforeUnmount(() => {
 .card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .inline { display: flex; gap: 8px; width: 100%; }
 .sum { margin-top: 8px; text-align: right; line-height: 1.8; }
+.sum-tip { font-size: 12px; color: #909399; font-weight: normal; margin-left: 4px; }
 .profit { color: #67c23a; }
 .grand { font-size: 18px; font-weight: 700; }
 .drawer-search { display: flex; gap: 8px; margin-bottom: 12px; }

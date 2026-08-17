@@ -87,6 +87,7 @@ type Quote struct {
 	TotalAmt     float64        `gorm:"type:decimal(12,2);not null;default:0" json:"totalAmt"`
 	TemplateID   *uint64        `json:"templateId"`
 	TemplateSnap string         `gorm:"type:text" json:"templateSnap"`
+	ShareToken   string         `gorm:"size:64;index" json:"shareToken"`
 	CreatedBy    uint64         `gorm:"not null;default:0" json:"createdBy"`
 	CreatedAt    time.Time      `json:"createdAt"`
 	UpdatedAt    time.Time      `json:"updatedAt"`
@@ -114,7 +115,10 @@ type QuoteItem struct {
 	Qty            float64        `gorm:"type:decimal(12,2);not null;default:1" json:"qty"`
 	Unit           string         `gorm:"size:16;not null;default:件" json:"unit"`
 	RetailPrice    float64        `gorm:"type:decimal(12,2);not null;default:0" json:"retailPrice"`
-	CostPrice      float64        `gorm:"type:decimal(12,2);not null;default:0" json:"costPrice"` // 成本/拿货价（内部）
+	CostPrice      float64        `gorm:"type:decimal(12,2);not null;default:0" json:"costPrice"` // 内部成本价
+	SupplyPrice    float64        `gorm:"type:decimal(12,2);not null;default:0" json:"supplyPrice"` // 供货商拿货价
+	SupplyPriceAt  *time.Time     `json:"supplyPriceAt"`                                           // 拿货价更新时间
+	SupplyRemark   string         `gorm:"size:512" json:"supplyRemark"`                            // 供货商备注
 	QuotePrice     float64        `gorm:"type:decimal(12,2);not null;default:0" json:"quotePrice"`
 	LineTotal      float64        `gorm:"type:decimal(12,2);not null;default:0" json:"lineTotal"`
 	UpgradeNote    string         `gorm:"size:512" json:"upgradeNote"`

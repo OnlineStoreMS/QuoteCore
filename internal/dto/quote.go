@@ -28,6 +28,7 @@ type TemplateSaveReq struct {
 }
 
 type QuoteItemReq struct {
+	ID             *uint64 `json:"id"`
 	Sort           int     `json:"sort"`
 	Source         string  `json:"source"`
 	ProductID      *uint64 `json:"productId"`
@@ -42,6 +43,9 @@ type QuoteItemReq struct {
 	Unit           string  `json:"unit"`
 	RetailPrice    float64 `json:"retailPrice"`
 	CostPrice      float64 `json:"costPrice"`
+	SupplyPrice    float64 `json:"supplyPrice"`
+	SupplyPriceAt  *string `json:"supplyPriceAt"` // RFC3339 or empty; admin round-trip
+	SupplyRemark   string  `json:"supplyRemark"`
 	QuotePrice     float64 `json:"quotePrice"`
 	UpgradeNote    string  `json:"upgradeNote"`
 	ParamsText     string  `json:"paramsText"`

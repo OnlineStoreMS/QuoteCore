@@ -54,6 +54,11 @@ export interface QuoteItem {
   unit: string
   retailPrice: number
   costPrice: number
+  /** 供货商填写的拿货价；有更新时间时参与成本合计 */
+  supplyPrice?: number
+  supplyPriceAt?: string | null
+  /** 供货商备注 */
+  supplyRemark?: string
   quotePrice: number
   lineTotal?: number
   upgradeNote: string
@@ -166,6 +171,18 @@ export function voidQuote(id: number) {
 
 export function copyQuote(id: number) {
   return client.post(`/quotes/${id}/copy`).then((r) => unwrap<Quote>(r))
+}
+
+export function ensureShareToken(id: number) {
+  return client.post(`/quotes/${id}/share`).then((r) =>
+    unwrap<{ shareToken: string; quoteNo: string; quoteId: number }>(r),
+  )
+}
+
+/** 有供货商拿货价更新时，用拿货价作为该规格成本 */
+export function effectiveCostPrice(it: Pick<QuoteItem, 'costPrice' | 'supplyPrice' | 'supplyPriceAt'>): number {
+  if (it.supplyPriceAt) return Number(it.supplyPrice || 0)
+  return Number(it.costPrice || 0)
 }
 
 export function searchCustomers(keyword: string, page = 1, pageSize = 20) {

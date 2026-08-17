@@ -20,6 +20,12 @@ const router = createRouter({
       meta: { public: true },
     },
     {
+      path: '/share/:token',
+      name: 'ShareFill',
+      component: () => import('../views/ShareFill.vue'),
+      meta: { public: true },
+    },
+    {
       path: '/',
       component: AdminLayout,
       redirect: '/dashboard',
