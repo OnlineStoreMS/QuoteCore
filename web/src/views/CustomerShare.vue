@@ -144,7 +144,7 @@ onMounted(() => {
     <div v-if="loading" class="state">正在打开报价单…</div>
     <div v-else-if="error" class="state error">{{ error }}</div>
     <template v-else>
-      <p class="hint">同产品多个规格默认勾选第一个计价，可按需要改选。{{ hasImage ? '点击规格图片可查看大图。' : '' }}</p>
+      <p class="hint">同产品多个规格只能选一个，默认选中第一个。{{ hasImage ? '点击规格图片可查看大图。' : '' }}</p>
       <div class="sheet-scroll">
         <div class="sheet-wrap">
           <QuoteSheet

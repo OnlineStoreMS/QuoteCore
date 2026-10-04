@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import type { QuoteItem, QuoteTemplate } from '../api/quote'
 import { isSkeletonTemplate } from '../api/quote'
-import { defaultPricedFlags, sumPriced } from '../utils/quotePrice'
+import { defaultPricedFlags, productGroupRange, selectOnlySpec, sumPriced } from '../utils/quotePrice'
 
 const props = defineProps<{
   quote: {
@@ -101,11 +101,12 @@ const displayTotal = computed(() =>
   ) / 100,
 )
 
-function togglePrice(idx: number, ev: Event) {
-  const checked = (ev.target as HTMLInputElement).checked
-  const next = pricedFlags.value.slice()
-  next[idx] = checked
-  emit('update:priceFlags', next)
+function groupHead(idx: number) {
+  return productGroupRange(props.quote.items, idx)[0]
+}
+
+function choosePrice(idx: number) {
+  emit('update:priceFlags', selectOnlySpec(props.quote.items, pricedFlags.value, idx))
 }
 </script>
 
@@ -232,7 +233,12 @@ function togglePrice(idx: number, ev: Event) {
             <td>{{ money(it.quotePrice) }}</td>
             <td class="line-total">
               <label v-if="pickPrices" class="pick">
-                <input type="checkbox" :checked="!!pricedFlags[idx]" @change="togglePrice(idx, $event)" />
+                <input
+                  type="radio"
+                  :name="'spec-' + groupHead(idx)"
+                  :checked="!!pricedFlags[idx]"
+                  @change="choosePrice(idx)"
+                />
                 <span v-if="pricedFlags[idx]">{{ money(it.qty * it.quotePrice) }}</span>
                 <span v-else class="skip">不计</span>
               </label>
@@ -256,7 +262,7 @@ function togglePrice(idx: number, ev: Event) {
       <div v-if="quote.taxAmt">税费：¥{{ money(quote.taxAmt) }}</div>
       <div class="grand">合计（{{ quote.currency || 'CNY' }}）：¥{{ money(displayTotal) }}</div>
       <div v-if="hasOptionalSpec" class="note">
-        {{ pickPrices ? '勾选规格后合计自动更新。同产品默认只计第一个规格。' : '同产品多规格默认只计第一个，其余不重复加总。' }}
+        {{ pickPrices ? '同产品规格为单选，改选后合计自动更新。' : '同产品多规格默认只计第一个，其余不重复加总。' }}
       </div>
     </section>
 
@@ -315,7 +321,7 @@ function togglePrice(idx: number, ev: Event) {
   min-height: 28px;
   cursor: pointer;
 }
-.pick input { width: 18px; height: 18px; margin: 0; flex: 0 0 auto; }
+.pick input { width: 18px; height: 18px; margin: 0; flex: 0 0 auto; accent-color: #1f2329; }
 tr.off-price td { color: #8f959e; }
 .remark { margin-top: 12px; color: #646a73; }
 .foot { margin-top: 16px; padding-top: 10px; border-top: 1px dashed #d0d3d6; color: #8f959e; white-space: pre-wrap; }
