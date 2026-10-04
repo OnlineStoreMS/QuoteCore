@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import QuoteSheet from '../components/QuoteSheet.vue'
 import { fetchCustomerShare, type CustomerShareQuote } from '../api/publicShare'
@@ -14,7 +14,17 @@ const error = ref('')
 const data = ref<CustomerShareQuote | null>(null)
 const previewUrl = ref('')
 const showPreview = ref(false)
+const SHEET_W = 794
 const priceFlags = ref<boolean[]>([])
+const pageEl = ref<HTMLElement | null>(null)
+const sheetEl = ref<HTMLElement | null>(null)
+const scale = ref(Math.min(1, Math.max(280, window.innerWidth - 32) / SHEET_W))
+const sheetH = ref(640)
+
+const fitStyle = computed(() => ({
+  width: `${Math.round(SHEET_W * scale.value)}px`,
+  height: `${Math.round(sheetH.value * scale.value)}px`,
+}))
 
 const template = computed<QuoteTemplate | null>(() => {
   const t = data.value?.template
@@ -114,6 +124,15 @@ function closePreview() {
   previewUrl.value = ''
 }
 
+function measure() {
+  const avail = Math.max(280, (pageEl.value?.clientWidth || window.innerWidth) - 16)
+  scale.value = Math.min(1, avail / SHEET_W)
+  const h = sheetEl.value?.offsetHeight
+  if (h && h > 0) sheetH.value = h
+}
+
+let ro: ResizeObserver | null = null
+
 async function load() {
   if (!token.value) {
     error.value = '链接无效'
@@ -131,45 +150,53 @@ async function load() {
     data.value = null
   } finally {
     loading.value = false
+    await nextTick()
+    measure()
   }
 }
 
-const VIEWPORT = 'width=device-width, initial-scale=1.0'
-const SHARE_VIEWPORT = 'width=840, initial-scale=1, maximum-scale=5, user-scalable=yes'
-
-function shareViewport() {
-  const meta = document.querySelector('meta[name="viewport"]')
-  if (!meta) return
-  if (window.matchMedia('(max-width: 900px)').matches) meta.setAttribute('content', SHARE_VIEWPORT)
-}
-
-shareViewport()
-
 onMounted(() => {
+  document.querySelector('meta[name="viewport"]')?.setAttribute(
+    'content',
+    'width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes',
+  )
+  ro = new ResizeObserver(() => measure())
+  if (pageEl.value) ro.observe(pageEl.value)
+  window.addEventListener('resize', measure)
   void load()
 })
 
+watch(sheetEl, (el, prev) => {
+  if (prev && ro) ro.unobserve(prev)
+  if (el && ro) ro.observe(el)
+  measure()
+})
+
 onBeforeUnmount(() => {
-  document.querySelector('meta[name="viewport"]')?.setAttribute('content', VIEWPORT)
+  ro?.disconnect()
+  window.removeEventListener('resize', measure)
+  document.querySelector('meta[name="viewport"]')?.setAttribute('content', 'width=device-width, initial-scale=1.0')
 })
 </script>
 
 <template>
-  <div class="page">
+  <div ref="pageEl" class="page">
     <div v-if="loading" class="state">正在打开报价单…</div>
     <div v-else-if="error" class="state error">{{ error }}</div>
     <template v-else>
-      <p class="hint">同产品多个规格只能选一个，默认选中第一个。可双指缩放查看。{{ hasImage ? '点击规格图片可查看大图。' : '' }}</p>
+      <p class="hint">同产品多个规格只能选一个，默认选中第一个。双指放大可看清表格。{{ hasImage ? '点击规格图片查看大图。' : '' }}</p>
       <div class="sheet-scroll">
-        <div class="sheet-wrap">
-          <QuoteSheet
-            v-model:price-flags="priceFlags"
-            :quote="quote"
-            :template="template"
-            interactive
-            pick-prices
-            @preview-image="openPreview"
-          />
+        <div class="fit" :style="fitStyle">
+          <div ref="sheetEl" class="sheet-wrap" :style="{ transform: `scale(${scale})` }">
+            <QuoteSheet
+              v-model:price-flags="priceFlags"
+              :quote="quote"
+              :template="template"
+              interactive
+              pick-prices
+              @preview-image="openPreview"
+            />
+          </div>
         </div>
       </div>
       <div class="live-total">合计 ¥{{ liveTotal.toFixed(2) }}</div>
@@ -196,9 +223,12 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: center;
 }
+.fit {
+  margin: 0 auto;
+}
 .sheet-wrap {
   width: 794px;
-  margin: 0 auto;
+  transform-origin: top left;
   box-shadow: 0 8px 28px rgba(16, 24, 40, 0.08);
 }
 .hint {
@@ -238,28 +268,32 @@ onBeforeUnmount(() => {
   position: fixed;
   inset: 0;
   z-index: 4000;
-  background: rgba(0, 0, 0, 0.88);
+  width: 100vw;
+  height: 100dvh;
+  background: rgba(0, 0, 0, 0.92);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 48px 16px 16px;
+  padding: 56px 12px 16px;
   box-sizing: border-box;
 }
 .lightbox img {
   max-width: 100%;
   max-height: 100%;
+  width: auto;
+  height: auto;
   object-fit: contain;
 }
 .close {
   position: absolute;
-  top: 12px;
+  top: max(12px, env(safe-area-inset-top));
   right: 12px;
   border: 0;
-  background: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.2);
   color: #fff;
   border-radius: 999px;
-  padding: 6px 14px;
-  font-size: 14px;
+  padding: 8px 16px;
+  font-size: 15px;
   cursor: pointer;
 }
 </style>
