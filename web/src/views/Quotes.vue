@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   copyQuote,
   deleteQuote,
+  fetchDashboardStats,
   isSkeletonTemplate,
   listQuotes,
   listTemplates,
@@ -18,7 +19,8 @@ const route = useRoute()
 const loading = ref(false)
 const list = ref<Quote[]>([])
 const total = ref(0)
-const query = reactive({ keyword: '', status: '' as string | number | '', page: 1, pageSize: 20 })
+const query = reactive({ keyword: '', status: '' as string | number | '', secondEdit: '' as string, page: 1, pageSize: 20 })
+const applyCount = ref(0)
 
 const bizDialog = ref(false)
 const bizLoading = ref(false)
@@ -38,11 +40,18 @@ async function load() {
     const data = await listQuotes({
       keyword: query.keyword || undefined,
       status: query.status === '' ? undefined : query.status,
+      secondEdit: query.secondEdit || undefined,
       page: query.page,
       pageSize: query.pageSize,
     })
     list.value = data.list || []
     total.value = data.total || 0
+    try {
+      const st = await fetchDashboardStats()
+      applyCount.value = st.secondEditApplyCount || 0
+    } catch {
+      applyCount.value = list.value.filter((q) => q.isSecondEdit).length
+    }
   } catch (e) {
     ElMessage.error((e as Error).message || '加载失败')
   } finally {
@@ -109,6 +118,7 @@ async function onDelete(row: Quote) {
 }
 
 onMounted(async () => {
+  if (route.query.secondEdit) query.secondEdit = '1'
   await load()
   if (route.query.fromBiz === '1') {
     await openBizCreate()
@@ -127,15 +137,38 @@ onMounted(async () => {
         <el-option label="已成交" :value="3" />
         <el-option label="作废" :value="4" />
       </el-select>
+      <el-select v-model="query.secondEdit" clearable placeholder="二次编辑" style="width: 140px" @change="query.page=1; load()">
+        <el-option label="二次编辑申请" value="1" />
+      </el-select>
       <el-button type="primary" @click="query.page=1; load()">查询</el-button>
       <el-button type="success" @click="router.push('/quotes/new')">新建报价</el-button>
       <el-button type="warning" plain @click="openBizCreate">从业务模板创建</el-button>
+      <el-tag
+        v-if="applyCount"
+        type="warning"
+        class="apply-tip"
+        style="cursor:pointer"
+        @click="query.secondEdit='1'; query.page=1; load()"
+      >
+        {{ applyCount }} 条二次编辑申请
+      </el-tag>
     </div>
 
     <el-table v-loading="loading" :data="list" border stripe>
       <el-table-column prop="quoteNo" label="单号" width="150" />
-      <el-table-column prop="title" label="标题" min-width="140" />
-      <el-table-column prop="customerName" label="客户" width="120" />
+      <el-table-column prop="title" label="标题" min-width="140">
+        <template #default="{ row }">
+          <div>{{ row.title }}</div>
+          <el-tag v-if="row.isSecondEdit" size="small" type="warning">二次编辑 · 原单 {{ row.originQuoteNo }}</el-tag>
+          <el-tag v-else-if="row.secondEditUsed" size="small" type="danger">二次编辑申请</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="客户" width="140">
+        <template #default="{ row }">
+          <div>{{ row.customerName || '—' }}</div>
+          <div v-if="row.isSecondEdit && row.secondEditApplicant" class="applicant">申请人 {{ row.secondEditApplicant }} {{ row.secondEditApplicantPhone }}</div>
+        </template>
+      </el-table-column>
       <el-table-column prop="contactPhone" label="电话" width="120" />
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
@@ -194,7 +227,8 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.toolbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.toolbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
+.applicant { font-size: 12px; color: #e6a23c; margin-top: 2px; }
 .pager { margin-top: 12px; display: flex; justify-content: flex-end; }
 .biz-hint { margin: 0 0 12px; color: #909399; font-size: 13px; }
 .biz-list { display: flex; flex-direction: column; gap: 8px; width: 100%; align-items: stretch; }

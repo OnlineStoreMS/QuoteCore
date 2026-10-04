@@ -32,6 +32,12 @@ const router = createRouter({
       meta: { public: true },
     },
     {
+      path: '/revise/:token',
+      name: 'ReviseShare',
+      component: () => import('../views/ReviseShare.vue'),
+      meta: { public: true },
+    },
+    {
       path: '/',
       component: AdminLayout,
       redirect: '/dashboard',

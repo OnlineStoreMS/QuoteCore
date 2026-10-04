@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import type { QuoteItem, QuoteTemplate } from '../api/quote'
 import { isSkeletonTemplate } from '../api/quote'
-import { defaultPricedFlags, productGroupRange, selectOnlySpec, sumPriced } from '../utils/quotePrice'
+import { defaultPricedFlags, isSamePartSpec, isSameProductSpec, productGroupRange, selectOnlySpec, sumPriced } from '../utils/quotePrice'
 
 const props = defineProps<{
   quote: {
@@ -56,11 +56,6 @@ function money(v: number) {
   return '¥' + Number(v || 0).toFixed(2)
 }
 
-function sameProduct(a: QuoteItem, b: QuoteItem): boolean {
-  if (a.productId && b.productId) return Number(a.productId) === Number(b.productId)
-  return (a.name || '').trim() !== '' && (a.name || '').trim() === (b.name || '').trim()
-}
-
 function sameCategory(a: QuoteItem, b: QuoteItem): boolean {
   const ca = (a.category || '').trim()
   const cb = (b.category || '').trim()
@@ -69,7 +64,23 @@ function sameCategory(a: QuoteItem, b: QuoteItem): boolean {
 
 function isProductHead(idx: number): boolean {
   if (idx <= 0) return true
-  return !sameProduct(props.quote.items[idx], props.quote.items[idx - 1])
+  return !isSameProductSpec(props.quote.items[idx], props.quote.items[idx - 1])
+}
+
+function isPartHead(idx: number): boolean {
+  if (idx <= 0) return true
+  return !isSamePartSpec(props.quote.items[idx], props.quote.items[idx - 1])
+}
+
+function continuationLabel(idx: number): string {
+  const cur = props.quote.items[idx]
+  const prev = props.quote.items[idx - 1]
+  if (!prev) return '└ 同产品规格'
+  const na = (cur.name || '').trim()
+  const nb = (prev.name || '').trim()
+  if (na && nb && na === nb) return '└ 同产品规格'
+  if (cur.productId && prev.productId && Number(cur.productId) === Number(prev.productId)) return '└ 同产品规格'
+  return '└ 同配件规格'
 }
 
 function isCategoryHead(idx: number): boolean {
@@ -173,7 +184,10 @@ function choosePrice(idx: number) {
                 <div class="name">{{ it.name || '—' }}</div>
               </template>
             </td>
-            <td data-label="配件">{{ it.partName || '—' }}</td>
+            <td data-label="配件">
+              <template v-if="isPartHead(idx)">{{ it.partName || '—' }}</template>
+              <div v-else class="spec-cont">└ 同配件规格</div>
+            </td>
             <td data-label="规格"><span class="spec-label">{{ it.specLabel || '—' }}</span></td>
             <td data-label="优惠价">{{ money(it.quotePrice) }}</td>
             <td v-if="showRetail" data-label="零售价">{{ money(it.retailPrice) }}</td>
@@ -213,13 +227,13 @@ function choosePrice(idx: number) {
             </td>
             <td data-label="产品">
               <template v-if="isProductHead(idx)">
-                <div class="name">{{ it.name }}</div>
+                <div class="name">{{ it.name || it.partName }}</div>
                 <div v-if="template?.showUpgrade !== false && it.upgradeNote" class="muted">升级：{{ it.upgradeNote }}</div>
                 <div v-if="template?.showParams !== false && it.paramsText" class="muted">参数：{{ it.paramsText }}</div>
                 <div v-if="it.remark" class="muted">备注：{{ it.remark }}</div>
               </template>
               <template v-else>
-                <div class="spec-cont">└ 同产品规格</div>
+                <div class="spec-cont">{{ continuationLabel(idx) }}</div>
                 <div v-if="template?.showUpgrade !== false && it.upgradeNote" class="muted">升级：{{ it.upgradeNote }}</div>
                 <div v-if="template?.showParams !== false && it.paramsText" class="muted">参数：{{ it.paramsText }}</div>
                 <div v-if="it.remark" class="muted">备注：{{ it.remark }}</div>

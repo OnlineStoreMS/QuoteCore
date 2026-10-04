@@ -3,6 +3,7 @@ import { FullScreen } from '@element-plus/icons-vue'
 import { ref } from 'vue'
 import type { QuoteItem } from '../api/quote'
 import { isQuoteStoredUrl, uploadImage, uploadImageFromUrl } from '../api/upload'
+import { isSamePartSpec, isSameProductSpec } from '../utils/quotePrice'
 import { ElMessage } from 'element-plus'
 
 const props = withDefaults(
@@ -12,19 +13,18 @@ const props = withDefaults(
     showZoomBtn?: boolean
     /** 组车骨架模式：产品/配件固定，填名称规格价图 */
     skeleton?: boolean
+    /** 顾客二次编辑：隐藏成本/拿货价，可用自定义上传 */
+    publicMode?: boolean
+    uploadFn?: (file: File, subdir?: string) => Promise<string>
+    uploadFromUrlFn?: (url: string, subdir?: string) => Promise<string>
   }>(),
-  { large: false, showZoomBtn: false, skeleton: false },
+  { large: false, showZoomBtn: false, skeleton: false, publicMode: false },
 )
 
 const emit = defineEmits<{
   zoom: []
   previewImage: [url: string]
 }>()
-
-function sameProduct(a: QuoteItem, b: QuoteItem): boolean {
-  if (a.productId && b.productId) return Number(a.productId) === Number(b.productId)
-  return (a.name || '').trim() !== '' && (a.name || '').trim() === (b.name || '').trim()
-}
 
 function sameCategory(a: QuoteItem, b: QuoteItem): boolean {
   const ca = (a.category || '').trim()
@@ -40,7 +40,12 @@ function isProductHead(idx: number): boolean {
     if ((cur.category || '').trim()) return !sameCategory(cur, prev)
     return true
   }
-  return !sameProduct(cur, prev)
+  return !isSameProductSpec(cur, prev)
+}
+
+function isPartHead(idx: number): boolean {
+  if (!props.skeleton || idx <= 0) return true
+  return !isSamePartSpec(props.items[idx], props.items[idx - 1])
 }
 
 function isCategoryHead(idx: number): boolean {
@@ -104,11 +109,33 @@ function addSpecRow(idx: number) {
       productId: base.productId ?? null,
       skuId: null,
       category: base.category || '',
-      partName: props.skeleton ? '' : base.partName || '',
+      partName: base.partName || '',
       name: base.name,
       imageUrl: '',
       unit: base.unit || '件',
       paramsText: base.paramsText || '',
+    }),
+  )
+  renumberSort()
+}
+
+/** 在当前配件后追加一行同配件规格 */
+function addPartSpecRow(idx: number) {
+  const base = props.items[idx]
+  if (!base) return
+  if (!(base.partName || '').trim()) {
+    ElMessage.warning('请先填写配件名称，再加规格')
+    return
+  }
+  props.items.splice(
+    idx + 1,
+    0,
+    emptyItem({
+      source: base.source || 'template',
+      category: base.category || '',
+      partName: base.partName,
+      name: '',
+      unit: base.unit || '件',
     }),
   )
   renumberSort()
@@ -156,6 +183,20 @@ function onCategoryInput(idx: number, val: string) {
   }
 }
 
+function onPartNameInput(idx: number, val: string) {
+  if (!isPartHead(idx)) return
+  const old = (props.items[idx].partName || '').trim()
+  props.items[idx].partName = val
+  if (!old) return
+  const cat = (props.items[idx].category || '').trim()
+  for (let i = idx + 1; i < props.items.length; i++) {
+    const it = props.items[i]
+    if ((it.category || '').trim() !== cat) break
+    if ((it.partName || '').trim() !== old) break
+    it.partName = val
+  }
+}
+
 function onProductNameInput(idx: number, val: string) {
   const old = props.items[idx].name
   props.items[idx].name = val
@@ -194,7 +235,9 @@ function moveRow(idx: number, dir: -1 | 1) {
 
 async function uploadRowImage(idx: number, opt: { file: File }) {
   try {
-    props.items[idx].imageUrl = await uploadImage(opt.file, 'items')
+    props.items[idx].imageUrl = props.uploadFn
+      ? await props.uploadFn(opt.file, 'items')
+      : await uploadImage(opt.file, 'items')
   } catch (e) {
     ElMessage.error((e as Error).message)
   }
@@ -228,7 +271,9 @@ async function applyImageLink() {
   }
   linkUploading.value = true
   try {
-    const url = await uploadImageFromUrl(raw, 'items')
+    const url = props.uploadFromUrlFn
+      ? await props.uploadFromUrlFn(raw, 'items')
+      : await uploadImageFromUrl(raw, 'items')
     props.items[idx].imageUrl = url
     linkDraft.value = url
     ElMessage.success('已上传到报价中心')
@@ -283,9 +328,15 @@ function formatSupplyAt(raw?: string | null) {
             <span v-else class="muted-cell" />
           </template>
         </el-table-column>
-        <el-table-column label="配件" :width="large ? 130 : 110">
-          <template #default="{ row }">
-            <el-input v-model="row.partName" placeholder="配件" />
+        <el-table-column label="配件" :width="large ? 150 : 120">
+          <template #default="{ row, $index }">
+            <el-input
+              v-if="isPartHead($index)"
+              :model-value="row.partName"
+              placeholder="配件"
+              @update:model-value="(v: string) => onPartNameInput($index, v)"
+            />
+            <div v-else class="spec-cont">└ 同配件规格</div>
           </template>
         </el-table-column>
       </template>
@@ -362,12 +413,12 @@ function formatSupplyAt(raw?: string | null) {
           <el-input v-model.number="row.retailPrice" inputmode="decimal" placeholder="0.00" />
         </template>
       </el-table-column>
-      <el-table-column label="成本价" :width="large ? 130 : 110">
+      <el-table-column v-if="!publicMode" label="成本价" :width="large ? 130 : 110">
         <template #default="{ row }">
           <el-input v-model.number="row.costPrice" inputmode="decimal" placeholder="0.00" />
         </template>
       </el-table-column>
-      <el-table-column label="拿货价" :width="large ? 150 : 128">
+      <el-table-column v-if="!publicMode" label="拿货价" :width="large ? 150 : 128">
         <template #default="{ row }">
           <div v-if="row.supplyPriceAt" class="supply-cell">
             <div class="supply-price">¥{{ Number(row.supplyPrice || 0).toFixed(2) }}</div>
@@ -376,7 +427,7 @@ function formatSupplyAt(raw?: string | null) {
           <span v-else class="muted-cell">待供货商填</span>
         </template>
       </el-table-column>
-      <el-table-column label="供货商备注" :min-width="large ? 160 : 120">
+      <el-table-column v-if="!publicMode" label="供货商备注" :min-width="large ? 160 : 120">
         <template #default="{ row }">
           <span v-if="(row.supplyRemark || '').trim()" class="supply-remark">{{ row.supplyRemark }}</span>
           <span v-else class="muted-cell">—</span>
@@ -394,9 +445,10 @@ function formatSupplyAt(raw?: string | null) {
       <el-table-column label="备注" :min-width="large ? 160 : 120">
         <template #default="{ row }"><el-input v-model="row.remark" type="textarea" :rows="large ? 2 : 1" /></template>
       </el-table-column>
-      <el-table-column label="操作" :width="large ? (skeleton ? 260 : 200) : skeleton ? 220 : 168" fixed="right">
+      <el-table-column label="操作" :width="large ? (skeleton ? 320 : 200) : skeleton ? 268 : 168" fixed="right">
         <template #default="{ $index }">
           <template v-if="skeleton">
+            <el-button link type="primary" @click="addPartSpecRow($index)">加规格</el-button>
             <el-button link type="primary" @click="addPartRow($index)">加配件</el-button>
             <el-button v-if="isCategoryHead($index)" link type="warning" @click="addProductGroup($index)">加产品</el-button>
           </template>

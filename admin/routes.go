@@ -20,6 +20,7 @@ func RegisterRoutes(g *gin.RouterGroup, h *Handlers) {
 	g.POST("/quotes/:id/copy", h.CopyQuote)
 	g.POST("/quotes/:id/share", h.EnsureShare)
 	g.POST("/quotes/:id/customer-share", h.EnsureCustomerShare)
+	g.GET("/quotes/:id/second-edit", h.GetSecondEdit)
 
 	g.GET("/customers/search", h.SearchCustomers)
 	g.GET("/product-skus/search", h.SearchProductSkus)

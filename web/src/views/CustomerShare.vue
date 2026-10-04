@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import QuoteSheet from '../components/QuoteSheet.vue'
-import { fetchCustomerShare, type CustomerShareQuote } from '../api/publicShare'
+import { applySecondEdit, fetchCustomerShare, openSecondEdit, saveCustomerPriced, type CustomerShareQuote } from '../api/publicShare'
 import type { QuoteItem, QuoteTemplate } from '../api/quote'
 import { defaultPricedFlags, sumPriced } from '../utils/quotePrice'
 
 const route = useRoute()
+const router = useRouter()
 const token = computed(() => String(route.params.token || '').trim())
 
 const loading = ref(true)
@@ -16,6 +18,14 @@ const previewUrl = ref('')
 const showPreview = ref(false)
 const SHEET_W = 794
 const priceFlags = ref<boolean[]>([])
+const savingFlags = ref(false)
+const saveHint = ref('')
+const secondEditUsed = ref(false)
+const applyOpen = ref(false)
+const applying = ref(false)
+const applicant = reactive({ name: '', phone: '', note: '' })
+let flagsReady = false
+let saveTimer: number | null = null
 const pageEl = ref<HTMLElement | null>(null)
 const sheetEl = ref<HTMLElement | null>(null)
 const scale = ref(Math.min(1, Math.max(280, window.innerWidth - 32) / SHEET_W))
@@ -105,12 +115,100 @@ const liveTotal = computed(() => {
 })
 
 watch(data, (q) => {
+  flagsReady = false
   if (!q) {
     priceFlags.value = []
+    secondEditUsed.value = false
     return
   }
-  priceFlags.value = defaultPricedFlags(quote.value.items)
+  secondEditUsed.value = !!q.secondEditUsed || !!q.isSecondEdit
+  const flags = q.pricedFlags && q.pricedFlags.length === quote.value.items.length
+    ? q.pricedFlags.slice()
+    : defaultPricedFlags(quote.value.items)
+  priceFlags.value = flags
+  nextTick(() => {
+    flagsReady = true
+  })
 })
+
+async function persistFlags(manual = false) {
+  if (!token.value || !priceFlags.value.length) return
+  savingFlags.value = true
+  try {
+    const saved = await saveCustomerPriced(token.value, priceFlags.value)
+    secondEditUsed.value = !!saved.secondEditUsed || !!saved.isSecondEdit
+    saveHint.value = '已保存勾选'
+    if (manual) ElMessage.success('规格勾选已保存')
+  } catch (e) {
+    saveHint.value = '保存失败'
+    if (manual) ElMessage.error((e as Error).message || '保存失败')
+  } finally {
+    savingFlags.value = false
+  }
+}
+
+function scheduleSaveFlags() {
+  if (!flagsReady) return
+  saveHint.value = '正在保存…'
+  if (saveTimer) window.clearTimeout(saveTimer)
+  saveTimer = window.setTimeout(() => {
+    void persistFlags(false)
+  }, 400)
+}
+
+watch(priceFlags, () => scheduleSaveFlags(), { deep: true })
+
+function openApply() {
+  applyOpen.value = true
+}
+
+async function submitOpen() {
+  if (!applicant.phone.trim()) {
+    ElMessage.warning('请填写申请时的电话')
+    return
+  }
+  applying.value = true
+  try {
+    const res = await openSecondEdit(token.value, {
+      applicantPhone: applicant.phone.trim(),
+      applicantName: applicant.name.trim() || undefined,
+    })
+    if (!res?.token) throw new Error('核验成功但未返回编辑链接')
+    applyOpen.value = false
+    ElMessage.success('核验通过，正在打开二次编辑')
+    await router.push(`/revise/${res.token}`)
+  } catch (e) {
+    ElMessage.error((e as Error).message || '核验失败')
+  } finally {
+    applying.value = false
+  }
+}
+
+async function submitApply() {
+  if (!applicant.name.trim() || !applicant.phone.trim()) {
+    ElMessage.warning('请填写申请人姓名和电话')
+    return
+  }
+  applying.value = true
+  try {
+    await persistFlags(false)
+    const res = await applySecondEdit(token.value, {
+      applicantName: applicant.name.trim(),
+      applicantPhone: applicant.phone.trim(),
+      applicantNote: applicant.note.trim(),
+    })
+    if (!res?.token) throw new Error('申请成功但未返回编辑链接')
+    secondEditUsed.value = true
+    applyOpen.value = false
+    ElMessage.success('申请已提交。之后可用本分享链接加申请电话再次打开。')
+    await router.push(`/revise/${res.token}`)
+  } catch (e) {
+    ElMessage.error((e as Error).message || '申请失败')
+    if (String((e as Error).message || '').includes('已用完')) secondEditUsed.value = true
+  } finally {
+    applying.value = false
+  }
+}
 
 function openPreview(url: string) {
   const u = (url || '').trim()
@@ -184,7 +282,7 @@ onBeforeUnmount(() => {
     <div v-if="loading" class="state">正在打开报价单…</div>
     <div v-else-if="error" class="state error">{{ error }}</div>
     <template v-else>
-      <p class="hint">同产品多个规格只能选一个，默认选中第一个。双指放大可看清表格。{{ hasImage ? '点击规格图片查看大图。' : '' }}</p>
+      <p class="hint">同产品多个规格只能选一个，勾选后自动保存。双指放大可看清表格。{{ hasImage ? '点击规格图片查看大图。' : '' }}</p>
       <div class="sheet-scroll">
         <div class="fit" :style="fitStyle">
           <div ref="sheetEl" class="sheet-wrap" :style="{ transform: `scale(${scale})` }">
@@ -199,8 +297,51 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </div>
-      <div class="live-total">合计 ¥{{ liveTotal.toFixed(2) }}</div>
+      <div class="live-total">
+        <div class="live-actions">
+          <button type="button" class="ghost" @click="openApply">
+            {{ secondEditUsed ? '查看我的二次编辑单' : '二次编辑分享' }}
+          </button>
+          <button type="button" class="save" :disabled="savingFlags" @click="persistFlags(true)">
+            {{ savingFlags ? '保存中…' : '保存勾选' }}
+          </button>
+        </div>
+        <div class="live-sum">
+          <span v-if="saveHint" class="save-hint">{{ saveHint }}</span>
+          合计 ¥{{ liveTotal.toFixed(2) }}
+        </div>
+      </div>
     </template>
+
+    <div v-if="applyOpen" class="apply-mask" @click.self="applyOpen = false">
+      <div class="apply-box">
+        <template v-if="secondEditUsed">
+          <h3>查看二次编辑单</h3>
+          <p>请填写申请时的电话，核验通过后打开你的二次编辑报价单。</p>
+          <label>申请人姓名<input v-model="applicant.name" placeholder="可选，更准确" /></label>
+          <label>申请人电话<input v-model="applicant.phone" placeholder="必填" /></label>
+          <div class="apply-actions">
+            <button type="button" class="ghost" @click="applyOpen = false">取消</button>
+            <button type="button" class="save" :disabled="applying" @click="submitOpen">
+              {{ applying ? '核验中…' : '打开二次编辑' }}
+            </button>
+          </div>
+        </template>
+        <template v-else>
+          <h3>二次编辑分享申请</h3>
+          <p>提交后将复制一份报价单供你修改，每个报价单只能申请一次。之后可用本分享链接加申请电话再次打开。</p>
+          <label>申请人姓名<input v-model="applicant.name" placeholder="必填" /></label>
+          <label>申请人电话<input v-model="applicant.phone" placeholder="必填，回访时核验" /></label>
+          <label>备注<input v-model="applicant.note" placeholder="可选" /></label>
+          <div class="apply-actions">
+            <button type="button" class="ghost" @click="applyOpen = false">取消</button>
+            <button type="button" class="save" :disabled="applying" @click="submitApply">
+              {{ applying ? '提交中…' : '提交申请并编辑' }}
+            </button>
+          </div>
+        </template>
+      </div>
+    </div>
 
     <teleport to="body">
       <div v-if="showPreview" class="lightbox" @click="closePreview">
@@ -245,14 +386,58 @@ onBeforeUnmount(() => {
   right: 0;
   bottom: 0;
   z-index: 20;
-  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
   background: rgba(255, 255, 255, 0.96);
   border-top: 1px solid #e5e7eb;
-  text-align: right;
-  font-size: 18px;
-  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
   color: #1f2329;
 }
+.live-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.live-sum { font-size: 18px; font-weight: 700; margin-left: auto; }
+.save-hint { font-size: 12px; font-weight: 400; color: #67c23a; margin-right: 10px; }
+button.save, button.ghost {
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 14px;
+  cursor: pointer;
+}
+button.save { background: #1f6feb; color: #fff; }
+button.ghost { background: #eef2f6; color: #303133; }
+button.save:disabled, button.ghost:disabled { opacity: 0.5; cursor: not-allowed; }
+.apply-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgba(16, 24, 40, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.apply-box {
+  width: min(420px, 100%);
+  background: #fff;
+  border-radius: 12px;
+  padding: 18px 16px;
+}
+.apply-box h3 { margin: 0 0 8px; font-size: 17px; }
+.apply-box p { margin: 0 0 12px; color: #646a73; font-size: 13px; line-height: 1.5; }
+.apply-box label { display: block; margin-bottom: 10px; font-size: 13px; color: #303133; }
+.apply-box input {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  box-sizing: border-box;
+  border: 1px solid #dcdfe6;
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.apply-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .state {
   min-height: 40vh;
   display: flex;

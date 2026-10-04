@@ -9,6 +9,7 @@ import {
   ensureCustomerShareToken,
   ensureShareToken,
   getQuote,
+  getSecondEditQuote,
   isSkeletonTemplate,
   listTemplates,
   saveQuote,
@@ -21,7 +22,7 @@ import {
   type SkuHit,
 } from '../api/quote'
 import { copyElementAsImage, downloadElementAsPdf, downloadElementAsPng, waitForImages } from '../utils/exportQuote'
-import { defaultPricedFlags, sumPriced } from '../utils/quotePrice'
+import { pricedFlagsFromSaved, sumPriced } from '../utils/quotePrice'
 
 const route = useRoute()
 const router = useRouter()
@@ -119,10 +120,17 @@ const form = reactive({
   taxAmt: 0,
   templateId: null as number | null,
   quoteNo: '',
+  customerPricedSaved: false,
+  isSecondEdit: false,
+  secondEditUsed: false,
+  secondEditQuoteId: null as number | null,
+  originQuoteNo: '',
+  secondEditApplicant: '',
+  secondEditApplicantPhone: '',
   items: [] as QuoteItem[],
 })
 
-const priceFlags = computed(() => defaultPricedFlags(form.items))
+const priceFlags = computed(() => pricedFlagsFromSaved(form.items, form.customerPricedSaved))
 const hasOptionalSpec = computed(() => priceFlags.value.some((on) => !on))
 const subtotal = computed(() =>
   sumPriced(form.items, priceFlags.value, (it) => Number(it.qty || 0) * Number(it.quotePrice || 0)),
@@ -312,6 +320,13 @@ async function loadQuote() {
     form.shippingAmt = q.shippingAmt || 0
     form.taxAmt = q.taxAmt || 0
     form.quoteNo = q.quoteNo || ''
+    form.customerPricedSaved = !!q.customerPricedSaved
+    form.isSecondEdit = !!q.isSecondEdit
+    form.secondEditUsed = !!q.secondEditUsed
+    form.secondEditQuoteId = q.secondEditQuoteId || null
+    form.originQuoteNo = q.originQuoteNo || ''
+    form.secondEditApplicant = q.secondEditApplicant || ''
+    form.secondEditApplicantPhone = q.secondEditApplicantPhone || ''
     form.items = (q.items || []).map((it, i) => ({
       id: it.id,
       sort: it.sort || (i + 1) * 10,
@@ -335,6 +350,7 @@ async function loadQuote() {
       upgradeNote: it.upgradeNote || '',
       paramsText: it.paramsText || '',
       remark: it.remark || '',
+      customerSelected: !!it.customerSelected,
     }))
     // 版式统一用版式模板：历史若绑了业务模板，改回默认版式
     const bound = q.templateId ? templates.value.find((t) => t.id === q.templateId) : null
@@ -413,6 +429,7 @@ function mapSavedItem(it: QuoteItem, i: number): QuoteItem {
     upgradeNote: it.upgradeNote || '',
     paramsText: it.paramsText || '',
     remark: it.remark || '',
+    customerSelected: !!it.customerSelected,
   }
 }
 
@@ -649,6 +666,58 @@ async function doDownloadPdf() {
 
 const sharing = ref(false)
 const sharingCustomer = ref(false)
+const showSecondPreview = ref(false)
+const secondPreviewLoading = ref(false)
+const secondPreviewQuote = ref<typeof previewQuote.value | null>(null)
+
+async function openSecondEditPreview() {
+  if (!quoteId.value || !form.secondEditQuoteId) return
+  secondPreviewLoading.value = true
+  showSecondPreview.value = true
+  try {
+    const q = await getSecondEditQuote(quoteId.value)
+    const items = (q.items || []).map((it, i) => ({
+      ...it,
+      sort: it.sort || (i + 1) * 10,
+      name: it.name || '',
+      specLabel: it.specLabel || '',
+      imageUrl: it.imageUrl || '',
+      qty: it.qty || 1,
+      unit: it.unit || '件',
+      retailPrice: it.retailPrice || 0,
+      costPrice: it.costPrice || 0,
+      quotePrice: it.quotePrice || 0,
+      upgradeNote: it.upgradeNote || '',
+      paramsText: it.paramsText || '',
+      remark: it.remark || '',
+      customerSelected: !!it.customerSelected,
+    }))
+    const flags = pricedFlagsFromSaved(items, !!q.customerPricedSaved)
+    const sub = sumPriced(items, flags, (it) => Number(it.qty || 0) * Number(it.quotePrice || 0))
+    const tot = Math.round((sub - Number(q.discountAmt || 0) + Number(q.shippingAmt || 0) + Number(q.taxAmt || 0)) * 100) / 100
+    secondPreviewQuote.value = {
+      quoteNo: q.quoteNo,
+      title: q.title,
+      customerName: q.customerName,
+      contactName: q.contactName,
+      contactPhone: q.contactPhone,
+      currency: q.currency,
+      validUntil: q.validUntil || null,
+      remark: q.remark,
+      discountAmt: q.discountAmt,
+      shippingAmt: q.shippingAmt,
+      taxAmt: q.taxAmt,
+      subtotalAmt: sub,
+      totalAmt: tot,
+      items,
+    }
+  } catch (e) {
+    ElMessage.error((e as Error).message || '加载二次编辑单失败')
+    showSecondPreview.value = false
+  } finally {
+    secondPreviewLoading.value = false
+  }
+}
 
 async function copyShareText(text: string, success: string) {
   try {
@@ -751,11 +820,20 @@ onBeforeUnmount(() => {
       <div class="left">
         <el-button @click="router.push('/quotes')">返回</el-button>
         <strong>{{ quoteId ? `编辑 ${form.quoteNo}` : '新建报价' }}</strong>
+        <el-tag v-if="form.isSecondEdit" type="warning" size="small">二次编辑</el-tag>
+        <el-tag v-else-if="form.secondEditUsed" type="danger" size="small">已有二次编辑申请</el-tag>
         <span v-if="autoSaveHint" class="autosave-hint" :class="autoSaveStatus">{{ autoSaveHint }}</span>
       </div>
       <div class="right">
         <el-button :loading="sharingCustomer" :disabled="!quoteId" @click="shareToCustomer">分享给顾客</el-button>
         <el-button :loading="sharing" :disabled="!quoteId" @click="shareToSupplier">分享给供货商</el-button>
+        <el-button
+          :disabled="!form.secondEditQuoteId"
+          :loading="secondPreviewLoading"
+          @click="openSecondEditPreview"
+        >
+          二次编辑分享预览
+        </el-button>
         <el-button :loading="exporting" @click="showPreview = true">预览</el-button>
         <el-button :loading="exporting" @click="doCopyImage">复制图片</el-button>
         <el-button :loading="exporting" @click="doDownloadPng">下载 PNG</el-button>
@@ -849,7 +927,7 @@ onBeforeUnmount(() => {
           <div class="sum">
             <div>零售价合计：¥{{ retailTotal.toFixed(2) }}</div>
             <div>成本合计：¥{{ costTotal.toFixed(2) }} <span class="sum-tip">有拿货价时按拿货价</span></div>
-            <div>报价小计：¥{{ subtotal.toFixed(2) }} <span v-if="hasOptionalSpec" class="sum-tip">同产品只计第一个规格</span></div>
+            <div>报价小计：¥{{ subtotal.toFixed(2) }} <span v-if="hasOptionalSpec" class="sum-tip">{{ form.customerPricedSaved ? '按顾客勾选规格计价' : '同产品、同配件只计第一个规格' }}</span></div>
             <div class="profit">预估利润：¥{{ profit.toFixed(2) }}</div>
             <div class="grand">合计：¥{{ total.toFixed(2) }}</div>
           </div>
@@ -923,7 +1001,7 @@ onBeforeUnmount(() => {
     <!-- 离屏导出：不依赖预览弹窗，避免 Dialog transform 裁切与剪贴板手势丢失 -->
     <div class="export-host" aria-hidden="true">
       <div ref="exportRef" class="export-sheet-host">
-        <QuoteSheet :quote="previewQuote" :template="sheetTemplate" />
+        <QuoteSheet :quote="previewQuote" :template="sheetTemplate" :price-flags="priceFlags" />
       </div>
     </div>
 
@@ -941,7 +1019,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="preview-wrap">
         <div ref="previewRef" class="preview-sheet-host">
-          <QuoteSheet :quote="previewQuote" :template="sheetTemplate" />
+          <QuoteSheet :quote="previewQuote" :template="sheetTemplate" :price-flags="priceFlags" />
         </div>
       </div>
       <template #footer>
@@ -949,6 +1027,35 @@ onBeforeUnmount(() => {
         <el-button :loading="exporting" @click="doDownloadPng">下载 PNG</el-button>
         <el-button type="primary" :loading="exporting" @click="doDownloadPdf">下载 PDF</el-button>
       </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="showSecondPreview"
+      title="二次编辑分享预览"
+      width="860px"
+      top="4vh"
+      append-to-body
+    >
+      <p class="preview-tip" style="margin-bottom: 8px">
+        申请人 {{ form.secondEditApplicant || '—' }} {{ form.secondEditApplicantPhone }}
+        <el-button
+          v-if="form.secondEditQuoteId"
+          link
+          type="primary"
+          @click="router.push(`/quotes/${form.secondEditQuoteId}`)"
+        >
+          打开编辑
+        </el-button>
+      </p>
+      <div v-loading="secondPreviewLoading" class="preview-wrap">
+        <div v-if="secondPreviewQuote" class="preview-sheet-host">
+          <QuoteSheet
+            :quote="secondPreviewQuote"
+            :template="sheetTemplate"
+            :price-flags="pricedFlagsFromSaved(secondPreviewQuote.items, true)"
+          />
+        </div>
+      </div>
     </el-dialog>
 
     <el-dialog

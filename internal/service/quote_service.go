@@ -15,6 +15,7 @@ import (
 	"quotecore/internal/repo"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type QuoteService struct {
@@ -56,6 +57,7 @@ func (s *QuoteService) DashboardStats(tenantID uint64) (*dto.DashboardStats, err
 	if sum != nil {
 		stats.MonthTotalAmt = *sum
 	}
+	_ = db.Model(&model.Quote{}).Where("tenant_id = ? AND is_second_edit = ?", tenantID, true).Count(&stats.SecondEditApplyCount).Error
 	return stats, nil
 }
 
@@ -315,15 +317,19 @@ func (s *QuoteService) ensureAssembleSkeleton(tenantID uint64) error {
 	})
 }
 
-func (s *QuoteService) ListQuotes(tenantID uint64, keyword, status string, page, pageSize int) ([]model.Quote, int64, error) {
+func (s *QuoteService) ListQuotes(tenantID uint64, keyword, status, secondEdit string, page, pageSize int) ([]model.Quote, int64, error) {
 	tenantID = repo.NormalizeTenantID(tenantID)
 	q := s.repos.DB.Model(&model.Quote{}).Where("tenant_id = ?", tenantID)
 	if keyword = strings.TrimSpace(keyword); keyword != "" {
 		like := "%" + keyword + "%"
-		q = q.Where("quote_no ILIKE ? OR title ILIKE ? OR customer_name ILIKE ? OR contact_phone ILIKE ?", like, like, like, like)
+		q = q.Where("quote_no ILIKE ? OR title ILIKE ? OR customer_name ILIKE ? OR contact_phone ILIKE ? OR origin_quote_no ILIKE ? OR second_edit_applicant ILIKE ?", like, like, like, like, like, like)
 	}
 	if status != "" {
 		q = q.Where("status = ?", status)
+	}
+	switch strings.TrimSpace(secondEdit) {
+	case "1", "true", "apply":
+		q = q.Where("is_second_edit = ?", true)
 	}
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
@@ -397,6 +403,8 @@ func buildItems(tenantID, quoteID uint64, reqs []dto.QuoteItemReq) ([]model.Quot
 		item := model.QuoteItem{
 			ProductID: r.ProductID,
 			Name:      name,
+			Category:  category,
+			PartName:  partName,
 		}
 		if n := len(items); n == 0 || !sameProductSpec(items[n-1], item) {
 			subtotal += lineTotal
@@ -415,30 +423,31 @@ func buildItems(tenantID, quoteID uint64, reqs []dto.QuoteItemReq) ([]model.Quot
 			}
 		}
 		items = append(items, model.QuoteItem{
-			TenantID:       tenantID,
-			QuoteID:        quoteID,
-			Sort:           sort,
-			Source:         src,
-			ProductID:      r.ProductID,
-			SkuID:          r.SkuID,
-			TemplateLineID: r.TemplateLineID,
-			Category:       category,
-			PartName:       partName,
-			Name:           name,
-			SpecLabel:      strings.TrimSpace(r.SpecLabel),
-			ImageURL:       strings.TrimSpace(r.ImageURL),
-			Qty:            qty,
-			Unit:           unit,
-			RetailPrice:    round2(r.RetailPrice),
-			CostPrice:      round2(r.CostPrice),
-			SupplyPrice:    round2(r.SupplyPrice),
-			SupplyPriceAt:  supplyAt,
-			SupplyRemark:   strings.TrimSpace(r.SupplyRemark),
-			QuotePrice:     round2(r.QuotePrice),
-			LineTotal:      lineTotal,
-			UpgradeNote:    strings.TrimSpace(r.UpgradeNote),
-			ParamsText:     strings.TrimSpace(r.ParamsText),
-			Remark:         strings.TrimSpace(r.Remark),
+			TenantID:         tenantID,
+			QuoteID:          quoteID,
+			Sort:             sort,
+			Source:           src,
+			ProductID:        r.ProductID,
+			SkuID:            r.SkuID,
+			TemplateLineID:   r.TemplateLineID,
+			Category:         category,
+			PartName:         partName,
+			Name:             name,
+			SpecLabel:        strings.TrimSpace(r.SpecLabel),
+			ImageURL:         strings.TrimSpace(r.ImageURL),
+			Qty:              qty,
+			Unit:             unit,
+			RetailPrice:      round2(r.RetailPrice),
+			CostPrice:        round2(r.CostPrice),
+			SupplyPrice:      round2(r.SupplyPrice),
+			SupplyPriceAt:    supplyAt,
+			SupplyRemark:     strings.TrimSpace(r.SupplyRemark),
+			QuotePrice:       round2(r.QuotePrice),
+			LineTotal:        lineTotal,
+			UpgradeNote:      strings.TrimSpace(r.UpgradeNote),
+			ParamsText:       strings.TrimSpace(r.ParamsText),
+			Remark:           strings.TrimSpace(r.Remark),
+			CustomerSelected: r.CustomerSelected != nil && *r.CustomerSelected,
 		})
 	}
 	return items, round2(subtotal), nil
@@ -459,7 +468,78 @@ func sameProductSpec(a, b model.QuoteItem) bool {
 	}
 	an := strings.TrimSpace(a.Name)
 	bn := strings.TrimSpace(b.Name)
-	return an != "" && an == bn
+	if an != "" && bn != "" {
+		return an == bn
+	}
+	return samePartSpec(a, b)
+}
+
+func samePartSpec(a, b model.QuoteItem) bool {
+	ap := strings.TrimSpace(a.PartName)
+	bp := strings.TrimSpace(b.PartName)
+	if ap == "" || ap != bp {
+		return false
+	}
+	return strings.TrimSpace(a.Category) == strings.TrimSpace(b.Category)
+}
+
+func defaultPricedFlags(items []model.QuoteItem) []bool {
+	flags := make([]bool, len(items))
+	for i := range items {
+		flags[i] = i == 0 || !sameProductSpec(items[i], items[i-1])
+	}
+	return flags
+}
+
+func normalizePricedFlags(items []model.QuoteItem, flags []bool) []bool {
+	out := defaultPricedFlags(items)
+	if len(flags) != len(items) {
+		return out
+	}
+	i := 0
+	for i < len(items) {
+		end := i
+		for end+1 < len(items) && sameProductSpec(items[end+1], items[end]) {
+			end++
+		}
+		picked := -1
+		for j := i; j <= end; j++ {
+			if flags[j] {
+				picked = j
+			}
+		}
+		if picked < 0 {
+			picked = i
+		}
+		for j := i; j <= end; j++ {
+			out[j] = j == picked
+		}
+		i = end + 1
+	}
+	return out
+}
+
+func pricedFlagsFor(items []model.QuoteItem, saved bool) []bool {
+	if !saved {
+		return defaultPricedFlags(items)
+	}
+	raw := make([]bool, len(items))
+	for i, it := range items {
+		raw[i] = it.CustomerSelected
+	}
+	return normalizePricedFlags(items, raw)
+}
+
+func applyQuoteTotals(q *model.Quote, items []model.QuoteItem) {
+	flags := pricedFlagsFor(items, q.CustomerPricedSaved)
+	var sub float64
+	for i, it := range items {
+		if flags[i] {
+			sub += it.LineTotal
+		}
+	}
+	q.SubtotalAmt = round2(sub)
+	q.TotalAmt = round2(sub - q.DiscountAmt + q.ShippingAmt + q.TaxAmt)
 }
 
 func (s *QuoteService) snapTemplate(tenantID uint64, templateID *uint64) (string, *uint64, error) {
@@ -531,7 +611,7 @@ func (s *QuoteService) SaveQuote(tenantID, userID, id uint64, req dto.QuoteSaveR
 			}
 		}
 
-		items, subtotal, err := buildItems(tenantID, quote.ID, req.Items)
+		items, _, err := buildItems(tenantID, quote.ID, req.Items)
 		if err != nil {
 			return err
 		}
@@ -552,12 +632,11 @@ func (s *QuoteService) SaveQuote(tenantID, userID, id uint64, req dto.QuoteSaveR
 		quote.DiscountAmt = round2(req.DiscountAmt)
 		quote.ShippingAmt = round2(req.ShippingAmt)
 		quote.TaxAmt = round2(req.TaxAmt)
-		quote.SubtotalAmt = subtotal
-		quote.TotalAmt = round2(subtotal - quote.DiscountAmt + quote.ShippingAmt + quote.TaxAmt)
 		quote.TemplateID = tid
 		quote.TemplateSnap = snap
 
 		if id == 0 {
+			applyQuoteTotals(&quote, items)
 			if err := tx.Create(&quote).Error; err != nil {
 				return err
 			}
@@ -572,14 +651,15 @@ func (s *QuoteService) SaveQuote(tenantID, userID, id uint64, req dto.QuoteSaveR
 				}
 			}
 		} else {
-			if err := tx.Save(&quote).Error; err != nil {
-				return err
-			}
 			synced, err := syncQuoteItems(tx, tenantID, quote.ID, req.Items)
 			if err != nil {
 				return err
 			}
 			items = synced
+			applyQuoteTotals(&quote, items)
+			if err := tx.Save(&quote).Error; err != nil {
+				return err
+			}
 		}
 		quote.Items = items
 		return nil
@@ -622,6 +702,9 @@ func syncQuoteItems(tx *gorm.DB, tenantID, quoteID uint64, reqs []dto.QuoteItemR
 					it.SupplyPrice = old.SupplyPrice
 					it.SupplyPriceAt = old.SupplyPriceAt
 					it.SupplyRemark = old.SupplyRemark
+				}
+				if reqs[i].CustomerSelected == nil {
+					it.CustomerSelected = old.CustomerSelected
 				}
 				if err := tx.Save(&it).Error; err != nil {
 					return nil, err
@@ -923,6 +1006,7 @@ type CustomerShareTemplate struct {
 
 // CustomerShareItem is a customer-safe line. Cost and supplier prices are omitted.
 type CustomerShareItem struct {
+	ID          uint64  `json:"id"`
 	Sort        int     `json:"sort"`
 	ProductID   *uint64 `json:"productId,omitempty"`
 	Category    string  `json:"category"`
@@ -937,25 +1021,30 @@ type CustomerShareItem struct {
 	UpgradeNote string  `json:"upgradeNote"`
 	ParamsText  string  `json:"paramsText"`
 	Remark      string  `json:"remark"`
+	Selected    bool    `json:"selected"`
 }
 
 // CustomerShareView is the public quote page for a customer.
 type CustomerShareView struct {
-	Title        string                `json:"title"`
-	QuoteNo      string                `json:"quoteNo"`
-	CustomerName string                `json:"customerName"`
-	ContactName  string                `json:"contactName"`
-	ContactPhone string                `json:"contactPhone"`
-	Currency     string                `json:"currency"`
-	ValidUntil   *string               `json:"validUntil"`
-	Remark       string                `json:"remark"`
-	DiscountAmt  float64               `json:"discountAmt"`
-	ShippingAmt  float64               `json:"shippingAmt"`
-	TaxAmt       float64               `json:"taxAmt"`
-	SubtotalAmt  float64               `json:"subtotalAmt"`
-	TotalAmt     float64               `json:"totalAmt"`
-	Template     CustomerShareTemplate `json:"template"`
-	Items        []CustomerShareItem   `json:"items"`
+	Title          string                `json:"title"`
+	QuoteNo        string                `json:"quoteNo"`
+	CustomerName   string                `json:"customerName"`
+	ContactName    string                `json:"contactName"`
+	ContactPhone   string                `json:"contactPhone"`
+	Currency       string                `json:"currency"`
+	ValidUntil     *string               `json:"validUntil"`
+	Remark         string                `json:"remark"`
+	DiscountAmt    float64               `json:"discountAmt"`
+	ShippingAmt    float64               `json:"shippingAmt"`
+	TaxAmt         float64               `json:"taxAmt"`
+	SubtotalAmt    float64               `json:"subtotalAmt"`
+	TotalAmt       float64               `json:"totalAmt"`
+	PricedSaved    bool                  `json:"pricedSaved"`
+	PricedFlags    []bool                `json:"pricedFlags"`
+	SecondEditUsed bool                  `json:"secondEditUsed"`
+	IsSecondEdit   bool                  `json:"isSecondEdit"`
+	Template       CustomerShareTemplate `json:"template"`
+	Items          []CustomerShareItem   `json:"items"`
 }
 
 func (s *QuoteService) defaultLayoutTemplate(tenantID uint64) (model.QuoteTemplate, error) {
@@ -1043,28 +1132,39 @@ func (s *QuoteService) GetCustomerShareByToken(token string) (*CustomerShareView
 	if err != nil {
 		return nil, err
 	}
+	flags := pricedFlagsFor(q.Items, q.CustomerPricedSaved)
+	applyQuoteTotals(&q, q.Items)
 	view := &CustomerShareView{
-		Title:        q.Title,
-		QuoteNo:      q.QuoteNo,
-		CustomerName: q.CustomerName,
-		ContactName:  q.ContactName,
-		ContactPhone: q.ContactPhone,
-		Currency:     q.Currency,
-		Remark:       q.Remark,
-		DiscountAmt:  q.DiscountAmt,
-		ShippingAmt:  q.ShippingAmt,
-		TaxAmt:       q.TaxAmt,
-		SubtotalAmt:  q.SubtotalAmt,
-		TotalAmt:     q.TotalAmt,
-		Template:     layoutTemplateView(tpl),
-		Items:        make([]CustomerShareItem, 0, len(q.Items)),
+		Title:          q.Title,
+		QuoteNo:        q.QuoteNo,
+		CustomerName:   q.CustomerName,
+		ContactName:    q.ContactName,
+		ContactPhone:   q.ContactPhone,
+		Currency:       q.Currency,
+		Remark:         q.Remark,
+		DiscountAmt:    q.DiscountAmt,
+		ShippingAmt:    q.ShippingAmt,
+		TaxAmt:         q.TaxAmt,
+		SubtotalAmt:    q.SubtotalAmt,
+		TotalAmt:       q.TotalAmt,
+		PricedSaved:    q.CustomerPricedSaved,
+		PricedFlags:    flags,
+		SecondEditUsed: q.SecondEditUsed || q.IsSecondEdit,
+		IsSecondEdit:   q.IsSecondEdit,
+		Template:       layoutTemplateView(tpl),
+		Items:          make([]CustomerShareItem, 0, len(q.Items)),
 	}
 	if q.ValidUntil != nil {
 		v := q.ValidUntil.Format("2006-01-02")
 		view.ValidUntil = &v
 	}
-	for _, it := range q.Items {
+	for i, it := range q.Items {
+		sel := false
+		if i < len(flags) {
+			sel = flags[i]
+		}
 		view.Items = append(view.Items, CustomerShareItem{
+			ID:          it.ID,
 			Sort:        it.Sort,
 			ProductID:   it.ProductID,
 			Category:    it.Category,
@@ -1079,7 +1179,470 @@ func (s *QuoteService) GetCustomerShareByToken(token string) (*CustomerShareView
 			UpgradeNote: it.UpgradeNote,
 			ParamsText:  it.ParamsText,
 			Remark:      it.Remark,
+			Selected:    sel,
 		})
 	}
 	return view, nil
+}
+
+func (s *QuoteService) loadQuoteByCustomerToken(token string) (*model.Quote, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, ErrNotFound
+	}
+	var q model.Quote
+	err := s.repos.DB.Where("customer_share_token = ?", token).Preload("Items", func(db *gorm.DB) *gorm.DB {
+		return db.Order("sort ASC, id ASC")
+	}).First(&q).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if q.Status == model.QuoteStatusVoid {
+		return nil, fmt.Errorf("%w: 报价单已作废", ErrBadRequest)
+	}
+	return &q, nil
+}
+
+func (s *QuoteService) SaveCustomerPriced(token string, flags []bool) (*CustomerShareView, error) {
+	q, err := s.loadQuoteByCustomerToken(token)
+	if err != nil {
+		return nil, err
+	}
+	if len(flags) != len(q.Items) {
+		return nil, fmt.Errorf("%w: 勾选结果与明细行数不一致", ErrBadRequest)
+	}
+	norm := normalizePricedFlags(q.Items, flags)
+	err = s.repos.DB.Transaction(func(tx *gorm.DB) error {
+		for i := range q.Items {
+			q.Items[i].CustomerSelected = norm[i]
+			if err := tx.Model(&model.QuoteItem{}).Where("id = ?", q.Items[i].ID).
+				Update("customer_selected", norm[i]).Error; err != nil {
+				return err
+			}
+		}
+		q.CustomerPricedSaved = true
+		applyQuoteTotals(q, q.Items)
+		return tx.Model(&model.Quote{}).Where("id = ?", q.ID).Updates(map[string]any{
+			"customer_priced_saved": true,
+			"subtotal_amt":          q.SubtotalAmt,
+			"total_amt":             q.TotalAmt,
+		}).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.GetCustomerShareByToken(token)
+}
+
+type SecondEditApplyResult struct {
+	Token     string `json:"token"`
+	QuoteNo   string `json:"quoteNo"`
+	QuoteID   uint64 `json:"quoteId"`
+	OriginNo  string `json:"originQuoteNo"`
+	Applicant string `json:"applicantName"`
+}
+
+func (s *QuoteService) ApplySecondEdit(token string, req dto.SecondEditApplyReq) (*SecondEditApplyResult, error) {
+	name := strings.TrimSpace(req.ApplicantName)
+	phone := strings.TrimSpace(req.ApplicantPhone)
+	note := strings.TrimSpace(req.ApplicantNote)
+	if name == "" {
+		return nil, fmt.Errorf("%w: 请填写申请人姓名", ErrBadRequest)
+	}
+	if phone == "" {
+		return nil, fmt.Errorf("%w: 请填写申请人电话", ErrBadRequest)
+	}
+	origin, err := s.loadQuoteByCustomerToken(token)
+	if err != nil {
+		return nil, err
+	}
+	if origin.IsSecondEdit {
+		return nil, fmt.Errorf("%w: 二次编辑单不能再次二次编辑分享", ErrBadRequest)
+	}
+
+	var result SecondEditApplyResult
+	err = s.repos.DB.Transaction(func(tx *gorm.DB) error {
+		var locked model.Quote
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ?", origin.ID).First(&locked).Error; err != nil {
+			return err
+		}
+		if locked.Status == model.QuoteStatusVoid {
+			return fmt.Errorf("%w: 报价单已作废", ErrBadRequest)
+		}
+		if locked.IsSecondEdit {
+			return fmt.Errorf("%w: 二次编辑单不能再次二次编辑分享", ErrBadRequest)
+		}
+		if locked.SecondEditUsed || (locked.SecondEditQuoteID != nil && *locked.SecondEditQuoteID > 0) {
+			return fmt.Errorf("%w: 该报价单的二次编辑分享次数已用完", ErrConflict)
+		}
+		var existed int64
+		if err := tx.Model(&model.Quote{}).Where("origin_quote_id = ?", locked.ID).Count(&existed).Error; err != nil {
+			return err
+		}
+		if existed > 0 {
+			return fmt.Errorf("%w: 该报价单的二次编辑分享次数已用完", ErrConflict)
+		}
+
+		no, err := s.nextQuoteNo(tx, locked.TenantID)
+		if err != nil {
+			return err
+		}
+		editTok, err := randomShareToken()
+		if err != nil {
+			return err
+		}
+		custTok, err := randomShareToken()
+		if err != nil {
+			return err
+		}
+		now := time.Now()
+		copyQ := model.Quote{
+			TenantID:                 locked.TenantID,
+			QuoteNo:                  no,
+			Title:                    locked.Title,
+			Status:                   model.QuoteStatusDraft,
+			CustomerID:               locked.CustomerID,
+			CustomerName:             locked.CustomerName,
+			ContactName:              locked.ContactName,
+			ContactPhone:             locked.ContactPhone,
+			Currency:                 locked.Currency,
+			ValidUntil:               locked.ValidUntil,
+			Remark:                   locked.Remark,
+			DiscountAmt:              locked.DiscountAmt,
+			ShippingAmt:              locked.ShippingAmt,
+			TaxAmt:                   locked.TaxAmt,
+			SubtotalAmt:              locked.SubtotalAmt,
+			TotalAmt:                 locked.TotalAmt,
+			TemplateID:               locked.TemplateID,
+			TemplateSnap:             locked.TemplateSnap,
+			CustomerShareToken:       custTok,
+			CustomerPricedSaved:      locked.CustomerPricedSaved,
+			IsSecondEdit:             true,
+			OriginQuoteID:            &locked.ID,
+			OriginQuoteNo:            locked.QuoteNo,
+			SecondEditToken:          editTok,
+			SecondEditApplicant:      name,
+			SecondEditApplicantPhone: phone,
+			SecondEditApplicantNote:  note,
+			SecondEditAppliedAt:      &now,
+			CreatedBy:                locked.CreatedBy,
+		}
+		if err := tx.Create(&copyQ).Error; err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "unique") || strings.Contains(err.Error(), "idx_quotes_origin_second_edit") {
+				return fmt.Errorf("%w: 该报价单的二次编辑分享次数已用完", ErrConflict)
+			}
+			return err
+		}
+		items := make([]model.QuoteItem, 0, len(origin.Items))
+		for _, it := range origin.Items {
+			items = append(items, model.QuoteItem{
+				TenantID:         copyQ.TenantID,
+				QuoteID:          copyQ.ID,
+				Sort:             it.Sort,
+				Source:           it.Source,
+				ProductID:        it.ProductID,
+				SkuID:            it.SkuID,
+				TemplateLineID:   it.TemplateLineID,
+				Category:         it.Category,
+				PartName:         it.PartName,
+				Name:             it.Name,
+				SpecLabel:        it.SpecLabel,
+				ImageURL:         it.ImageURL,
+				Qty:              it.Qty,
+				Unit:             it.Unit,
+				RetailPrice:      it.RetailPrice,
+				CostPrice:        it.CostPrice,
+				SupplyPrice:      it.SupplyPrice,
+				SupplyPriceAt:    it.SupplyPriceAt,
+				SupplyRemark:     it.SupplyRemark,
+				QuotePrice:       it.QuotePrice,
+				LineTotal:        it.LineTotal,
+				UpgradeNote:      it.UpgradeNote,
+				ParamsText:       it.ParamsText,
+				Remark:           it.Remark,
+				CustomerSelected: it.CustomerSelected,
+			})
+		}
+		if len(items) > 0 {
+			if err := tx.Create(&items).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Model(&model.Quote{}).Where("id = ?", locked.ID).Updates(map[string]any{
+			"second_edit_used":     true,
+			"second_edit_quote_id": copyQ.ID,
+		}).Error; err != nil {
+			return err
+		}
+		result = SecondEditApplyResult{
+			Token:     editTok,
+			QuoteNo:   copyQ.QuoteNo,
+			QuoteID:   copyQ.ID,
+			OriginNo:  locked.QuoteNo,
+			Applicant: name,
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func phoneDigits(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func (s *QuoteService) OpenSecondEdit(token string, req dto.SecondEditOpenReq) (*SecondEditApplyResult, error) {
+	phone := phoneDigits(req.ApplicantPhone)
+	if phone == "" {
+		return nil, fmt.Errorf("%w: 请填写申请人电话", ErrBadRequest)
+	}
+	q, err := s.loadQuoteByCustomerToken(token)
+	if err != nil {
+		return nil, err
+	}
+	var edit model.Quote
+	if q.IsSecondEdit {
+		edit = *q
+	} else {
+		if q.SecondEditQuoteID != nil && *q.SecondEditQuoteID > 0 {
+			if err := s.repos.DB.Where("id = ? AND is_second_edit = ?", *q.SecondEditQuoteID, true).First(&edit).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return nil, fmt.Errorf("%w: 尚未申请二次编辑分享", ErrBadRequest)
+				}
+				return nil, err
+			}
+		} else {
+			err := s.repos.DB.Where("origin_quote_id = ?", q.ID).First(&edit).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, fmt.Errorf("%w: 尚未申请二次编辑分享", ErrBadRequest)
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	if edit.Status == model.QuoteStatusVoid {
+		return nil, fmt.Errorf("%w: 报价单已作废", ErrBadRequest)
+	}
+	if phoneDigits(edit.SecondEditApplicantPhone) != phone {
+		return nil, fmt.Errorf("%w: 电话与申请记录不符", ErrBadRequest)
+	}
+	name := strings.TrimSpace(req.ApplicantName)
+	if name != "" && strings.TrimSpace(edit.SecondEditApplicant) != "" && !strings.EqualFold(name, strings.TrimSpace(edit.SecondEditApplicant)) {
+		return nil, fmt.Errorf("%w: 申请人信息不符", ErrBadRequest)
+	}
+	if strings.TrimSpace(edit.SecondEditToken) == "" {
+		return nil, fmt.Errorf("%w: 二次编辑链接无效", ErrBadRequest)
+	}
+	originNo := edit.OriginQuoteNo
+	if originNo == "" {
+		originNo = q.QuoteNo
+	}
+	return &SecondEditApplyResult{
+		Token:     edit.SecondEditToken,
+		QuoteNo:   edit.QuoteNo,
+		QuoteID:   edit.ID,
+		OriginNo:  originNo,
+		Applicant: edit.SecondEditApplicant,
+	}, nil
+}
+
+type SecondEditView struct {
+	ID                       uint64                `json:"id"`
+	QuoteNo                  string                `json:"quoteNo"`
+	OriginQuoteNo            string                `json:"originQuoteNo"`
+	Title                    string                `json:"title"`
+	Status                   int8                  `json:"status"`
+	CustomerName             string                `json:"customerName"`
+	ContactName              string                `json:"contactName"`
+	ContactPhone             string                `json:"contactPhone"`
+	Currency                 string                `json:"currency"`
+	ValidUntil               *string               `json:"validUntil"`
+	Remark                   string                `json:"remark"`
+	DiscountAmt              float64               `json:"discountAmt"`
+	ShippingAmt              float64               `json:"shippingAmt"`
+	TaxAmt                   float64               `json:"taxAmt"`
+	SubtotalAmt              float64               `json:"subtotalAmt"`
+	TotalAmt                 float64               `json:"totalAmt"`
+	TemplateID               *uint64               `json:"templateId"`
+	Template                 CustomerShareTemplate `json:"template"`
+	SecondEditApplicant      string                `json:"secondEditApplicant"`
+	SecondEditApplicantPhone string                `json:"secondEditApplicantPhone"`
+	SecondEditApplicantNote  string                `json:"secondEditApplicantNote"`
+	Items                    []SecondEditItem      `json:"items"`
+}
+
+type SecondEditItem struct {
+	ID               uint64  `json:"id"`
+	Sort             int     `json:"sort"`
+	Source           string  `json:"source"`
+	ProductID        *uint64 `json:"productId"`
+	SkuID            *uint64 `json:"skuId"`
+	TemplateLineID   *uint64 `json:"templateLineId"`
+	Category         string  `json:"category"`
+	PartName         string  `json:"partName"`
+	Name             string  `json:"name"`
+	SpecLabel        string  `json:"specLabel"`
+	ImageURL         string  `json:"imageUrl"`
+	Qty              float64 `json:"qty"`
+	Unit             string  `json:"unit"`
+	RetailPrice      float64 `json:"retailPrice"`
+	QuotePrice       float64 `json:"quotePrice"`
+	UpgradeNote      string  `json:"upgradeNote"`
+	ParamsText       string  `json:"paramsText"`
+	Remark           string  `json:"remark"`
+	CustomerSelected bool    `json:"customerSelected"`
+}
+
+func (s *QuoteService) loadSecondEditByToken(token string) (*model.Quote, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, ErrNotFound
+	}
+	var q model.Quote
+	err := s.repos.DB.Where("second_edit_token = ?", token).Preload("Items", func(db *gorm.DB) *gorm.DB {
+		return db.Order("sort ASC, id ASC")
+	}).First(&q).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !q.IsSecondEdit {
+		return nil, ErrNotFound
+	}
+	if q.Status == model.QuoteStatusVoid {
+		return nil, fmt.Errorf("%w: 报价单已作废", ErrBadRequest)
+	}
+	return &q, nil
+}
+
+func (s *QuoteService) toSecondEditView(q *model.Quote) (*SecondEditView, error) {
+	tpl, err := s.defaultLayoutTemplate(q.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	view := &SecondEditView{
+		ID:                       q.ID,
+		QuoteNo:                  q.QuoteNo,
+		OriginQuoteNo:            q.OriginQuoteNo,
+		Title:                    q.Title,
+		Status:                   q.Status,
+		CustomerName:             q.CustomerName,
+		ContactName:              q.ContactName,
+		ContactPhone:             q.ContactPhone,
+		Currency:                 q.Currency,
+		Remark:                   q.Remark,
+		DiscountAmt:              q.DiscountAmt,
+		ShippingAmt:              q.ShippingAmt,
+		TaxAmt:                   q.TaxAmt,
+		SubtotalAmt:              q.SubtotalAmt,
+		TotalAmt:                 q.TotalAmt,
+		TemplateID:               q.TemplateID,
+		Template:                 layoutTemplateView(tpl),
+		SecondEditApplicant:      q.SecondEditApplicant,
+		SecondEditApplicantPhone: q.SecondEditApplicantPhone,
+		SecondEditApplicantNote:  q.SecondEditApplicantNote,
+		Items:                    make([]SecondEditItem, 0, len(q.Items)),
+	}
+	if q.ValidUntil != nil {
+		v := q.ValidUntil.Format("2006-01-02")
+		view.ValidUntil = &v
+	}
+	for _, it := range q.Items {
+		view.Items = append(view.Items, SecondEditItem{
+			ID:               it.ID,
+			Sort:             it.Sort,
+			Source:           it.Source,
+			ProductID:        it.ProductID,
+			SkuID:            it.SkuID,
+			TemplateLineID:   it.TemplateLineID,
+			Category:         it.Category,
+			PartName:         it.PartName,
+			Name:             it.Name,
+			SpecLabel:        it.SpecLabel,
+			ImageURL:         it.ImageURL,
+			Qty:              it.Qty,
+			Unit:             it.Unit,
+			RetailPrice:      it.RetailPrice,
+			QuotePrice:       it.QuotePrice,
+			UpgradeNote:      it.UpgradeNote,
+			ParamsText:       it.ParamsText,
+			Remark:           it.Remark,
+			CustomerSelected: it.CustomerSelected,
+		})
+	}
+	return view, nil
+}
+
+func (s *QuoteService) SecondEditTenantID(token string) (uint64, error) {
+	q, err := s.loadSecondEditByToken(token)
+	if err != nil {
+		return 0, err
+	}
+	return q.TenantID, nil
+}
+
+func (s *QuoteService) GetSecondEditByToken(token string) (*SecondEditView, error) {
+	q, err := s.loadSecondEditByToken(token)
+	if err != nil {
+		return nil, err
+	}
+	return s.toSecondEditView(q)
+}
+
+func (s *QuoteService) SaveSecondEditByToken(token string, req dto.QuoteSaveReq) (*SecondEditView, error) {
+	q, err := s.loadSecondEditByToken(token)
+	if err != nil {
+		return nil, err
+	}
+	oldByID := make(map[uint64]model.QuoteItem, len(q.Items))
+	for _, it := range q.Items {
+		oldByID[it.ID] = it
+	}
+	for i := range req.Items {
+		if req.Items[i].ID == nil {
+			continue
+		}
+		old, ok := oldByID[*req.Items[i].ID]
+		if !ok {
+			continue
+		}
+		req.Items[i].CostPrice = old.CostPrice
+		req.Items[i].SupplyPrice = old.SupplyPrice
+		req.Items[i].SupplyRemark = old.SupplyRemark
+		if old.SupplyPriceAt != nil {
+			v := old.SupplyPriceAt.Format(time.RFC3339)
+			req.Items[i].SupplyPriceAt = &v
+		}
+	}
+	saved, err := s.SaveQuote(q.TenantID, q.CreatedBy, q.ID, req)
+	if err != nil {
+		return nil, err
+	}
+	return s.toSecondEditView(saved)
+}
+
+func (s *QuoteService) GetSecondEditOf(tenantID, originID uint64) (*model.Quote, error) {
+	origin, err := s.GetQuote(tenantID, originID)
+	if err != nil {
+		return nil, err
+	}
+	if origin.SecondEditQuoteID == nil || *origin.SecondEditQuoteID == 0 {
+		return nil, fmt.Errorf("%w: 尚无二次编辑分享单", ErrNotFound)
+	}
+	return s.GetQuote(tenantID, *origin.SecondEditQuoteID)
 }

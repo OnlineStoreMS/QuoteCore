@@ -7,6 +7,7 @@ export interface DashboardStats {
   wonCount: number
   templateCount: number
   monthTotalAmt: number
+  secondEditApplyCount?: number
 }
 
 export interface QuoteTemplateLine {
@@ -64,6 +65,7 @@ export interface QuoteItem {
   upgradeNote: string
   paramsText: string
   remark: string
+  customerSelected?: boolean
 }
 
 export interface Quote {
@@ -85,6 +87,16 @@ export interface Quote {
   totalAmt: number
   templateId?: number | null
   templateSnap?: string
+  customerPricedSaved?: boolean
+  isSecondEdit?: boolean
+  secondEditUsed?: boolean
+  secondEditQuoteId?: number | null
+  originQuoteId?: number | null
+  originQuoteNo?: string
+  secondEditApplicant?: string
+  secondEditApplicantPhone?: string
+  secondEditApplicantNote?: string
+  secondEditAppliedAt?: string | null
   items?: QuoteItem[]
   createdAt?: string
   updatedAt?: string
@@ -148,8 +160,18 @@ export function deleteTemplate(id: number) {
   return client.delete(`/quote-templates/${id}`).then((r) => unwrap(r))
 }
 
-export function listQuotes(params: { keyword?: string; status?: string | number; page?: number; pageSize?: number }) {
+export function listQuotes(params: {
+  keyword?: string
+  status?: string | number
+  secondEdit?: string | number
+  page?: number
+  pageSize?: number
+}) {
   return client.get('/quotes', { params }).then((r) => unwrap<PageData<Quote>>(r))
+}
+
+export function getSecondEditQuote(id: number) {
+  return client.get(`/quotes/${id}/second-edit`).then((r) => unwrap<Quote>(r))
 }
 
 export function getQuote(id: number) {

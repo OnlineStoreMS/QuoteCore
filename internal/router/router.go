@@ -55,11 +55,18 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	adminGroup.POST("/upload", uploadH.Upload)
 	adminGroup.POST("/upload/from-url", uploadH.UploadFromURL)
 
-	pub := admin.NewPublicHandlers(svc)
+	pub := admin.NewPublicHandlers(svc, store)
 	publicGroup := v1.Group("/public")
 	publicGroup.GET("/share/:token", pub.GetShare)
 	publicGroup.POST("/share/:token/submit", pub.SubmitSupply)
 	publicGroup.GET("/customer/:token", pub.GetCustomerShare)
+	publicGroup.POST("/customer/:token/priced", pub.SaveCustomerPriced)
+	publicGroup.POST("/customer/:token/second-edit", pub.ApplySecondEdit)
+	publicGroup.POST("/customer/:token/second-edit/open", pub.OpenSecondEdit)
+	publicGroup.GET("/revise/:token", pub.GetSecondEdit)
+	publicGroup.PUT("/revise/:token", pub.SaveSecondEdit)
+	publicGroup.POST("/revise/:token/upload", pub.UploadSecondEdit)
+	publicGroup.POST("/revise/:token/upload-from-url", pub.UploadSecondEditFromURL)
 
 	return r
 }

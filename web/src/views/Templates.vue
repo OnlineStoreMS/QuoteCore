@@ -177,6 +177,47 @@ async function applyLogoLink() {
   }
 }
 
+function isPartHead(idx: number): boolean {
+  if (idx <= 0) return true
+  const cur = form.lines[idx]
+  const prev = form.lines[idx - 1]
+  const part = (cur.partName || '').trim()
+  if (!part || part !== (prev.partName || '').trim()) return true
+  return (cur.category || '').trim() !== (prev.category || '').trim()
+}
+
+function addSpecLine(idx: number) {
+  const base = form.lines[idx]
+  if (!base) return
+  if (!(base.partName || '').trim()) {
+    ElMessage.warning('请先填写配件名称，再加规格')
+    return
+  }
+  form.lines.splice(idx + 1, 0, {
+    sort: 0,
+    category: base.category || '',
+    partName: base.partName,
+    hint: '',
+  })
+  form.lines.forEach((ln, i) => {
+    ln.sort = (i + 1) * 10
+  })
+}
+
+function onPartNameInput(idx: number, val: string) {
+  if (!isPartHead(idx)) return
+  const old = (form.lines[idx].partName || '').trim()
+  form.lines[idx].partName = val
+  if (!old) return
+  const cat = (form.lines[idx].category || '').trim()
+  for (let i = idx + 1; i < form.lines.length; i++) {
+    const ln = form.lines[i]
+    if ((ln.category || '').trim() !== cat) break
+    if ((ln.partName || '').trim() !== old) break
+    ln.partName = val
+  }
+}
+
 function addPartLine(idx: number) {
   const head = idx
   let start = head
@@ -423,7 +464,7 @@ onMounted(load)
                 加配件（末组）
               </el-button>
               <el-button size="small" type="primary" plain @click="loadPreset">载入组装车预设</el-button>
-              <span class="hint">加配件插到当前产品组末尾；加产品组在组后新建。</span>
+              <span class="hint">加规格紧跟当前配件；加配件插到当前产品组末尾；加产品组在组后新建。</span>
             </div>
             <el-table :data="form.lines" border size="small" class="lines-table">
               <el-table-column label="产品（组）" min-width="120">
@@ -438,13 +479,22 @@ onMounted(load)
                 </template>
               </el-table-column>
               <el-table-column label="配件" min-width="140">
-                <template #default="{ row }"><el-input v-model="row.partName" placeholder="如 车架" /></template>
+                <template #default="{ row, $index }">
+                  <el-input
+                    v-if="isPartHead($index)"
+                    :model-value="row.partName"
+                    placeholder="如 车架"
+                    @update:model-value="(v: string) => onPartNameInput($index, v)"
+                  />
+                  <div v-else class="spec-cont">└ 同配件规格</div>
+                </template>
               </el-table-column>
               <el-table-column label="填写提示" min-width="140">
                 <template #default="{ row }"><el-input v-model="row.hint" placeholder="可选" /></template>
               </el-table-column>
-              <el-table-column label="操作" width="160">
+              <el-table-column label="操作" width="220">
                 <template #default="{ $index }">
+                  <el-button link type="primary" @click="addSpecLine($index)">加规格</el-button>
                   <el-button link type="primary" @click="addPartLine($index)">加配件</el-button>
                   <el-button v-if="isLineCategoryHead($index)" link type="warning" @click="addProductGroupLine($index)">加产品</el-button>
                   <el-button link type="danger" @click="removeLine($index)">删</el-button>
@@ -471,4 +521,5 @@ onMounted(load)
 .lines-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; width: 100%; }
 .lines-table { width: 100%; }
 .line-muted { display: inline-block; min-height: 20px; color: #c0c4cc; }
+.spec-cont { color: #8f959e; font-size: 12px; padding: 0 4px; }
 </style>

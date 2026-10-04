@@ -120,7 +120,7 @@ func (h *Handlers) DeleteTemplate(c *gin.Context) {
 
 func (h *Handlers) ListQuotes(c *gin.Context) {
 	page, pageSize := httputil.ParsePage(c)
-	list, total, err := h.svc.ListQuotes(authcontext.TenantID(c), c.Query("keyword"), c.Query("status"), page, pageSize)
+	list, total, err := h.svc.ListQuotes(authcontext.TenantID(c), c.Query("keyword"), c.Query("status"), c.Query("secondEdit"), page, pageSize)
 	if err != nil {
 		h.mapError(c, err)
 		return
@@ -250,6 +250,20 @@ func (h *Handlers) EnsureCustomerShare(c *gin.Context) {
 		"quoteNo":    item.QuoteNo,
 		"quoteId":    item.ID,
 	})
+}
+
+func (h *Handlers) GetSecondEdit(c *gin.Context) {
+	id, err := httputil.ParseID(c)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	item, err := h.svc.GetSecondEditOf(authcontext.TenantID(c), id)
+	if err != nil {
+		h.mapError(c, err)
+		return
+	}
+	response.OK(c, item)
 }
 
 func (h *Handlers) SearchCustomers(c *gin.Context) {

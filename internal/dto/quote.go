@@ -28,28 +28,29 @@ type TemplateSaveReq struct {
 }
 
 type QuoteItemReq struct {
-	ID             *uint64 `json:"id"`
-	Sort           int     `json:"sort"`
-	Source         string  `json:"source"`
-	ProductID      *uint64 `json:"productId"`
-	SkuID          *uint64 `json:"skuId"`
-	TemplateLineID *uint64 `json:"templateLineId"`
-	Category       string  `json:"category"`
-	PartName       string  `json:"partName"`
-	Name           string  `json:"name"`
-	SpecLabel      string  `json:"specLabel"`
-	ImageURL       string  `json:"imageUrl"`
-	Qty            float64 `json:"qty"`
-	Unit           string  `json:"unit"`
-	RetailPrice    float64 `json:"retailPrice"`
-	CostPrice      float64 `json:"costPrice"`
-	SupplyPrice    float64 `json:"supplyPrice"`
-	SupplyPriceAt  *string `json:"supplyPriceAt"` // RFC3339 or empty; admin round-trip
-	SupplyRemark   string  `json:"supplyRemark"`
-	QuotePrice     float64 `json:"quotePrice"`
-	UpgradeNote    string  `json:"upgradeNote"`
-	ParamsText     string  `json:"paramsText"`
-	Remark         string  `json:"remark"`
+	ID               *uint64 `json:"id"`
+	Sort             int     `json:"sort"`
+	Source           string  `json:"source"`
+	ProductID        *uint64 `json:"productId"`
+	SkuID            *uint64 `json:"skuId"`
+	TemplateLineID   *uint64 `json:"templateLineId"`
+	Category         string  `json:"category"`
+	PartName         string  `json:"partName"`
+	Name             string  `json:"name"`
+	SpecLabel        string  `json:"specLabel"`
+	ImageURL         string  `json:"imageUrl"`
+	Qty              float64 `json:"qty"`
+	Unit             string  `json:"unit"`
+	RetailPrice      float64 `json:"retailPrice"`
+	CostPrice        float64 `json:"costPrice"`
+	SupplyPrice      float64 `json:"supplyPrice"`
+	SupplyPriceAt    *string `json:"supplyPriceAt"` // RFC3339 or empty; admin round-trip
+	SupplyRemark     string  `json:"supplyRemark"`
+	QuotePrice       float64 `json:"quotePrice"`
+	UpgradeNote      string  `json:"upgradeNote"`
+	ParamsText       string  `json:"paramsText"`
+	Remark           string  `json:"remark"`
+	CustomerSelected *bool   `json:"customerSelected"`
 }
 
 type QuoteSaveReq struct {
@@ -69,11 +70,27 @@ type QuoteSaveReq struct {
 	Items        []QuoteItemReq `json:"items"`
 }
 
+type CustomerPricedReq struct {
+	Flags []bool `json:"flags"`
+}
+
+type SecondEditApplyReq struct {
+	ApplicantName  string `json:"applicantName"`
+	ApplicantPhone string `json:"applicantPhone"`
+	ApplicantNote  string `json:"applicantNote"`
+}
+
+type SecondEditOpenReq struct {
+	ApplicantName  string `json:"applicantName"`
+	ApplicantPhone string `json:"applicantPhone"`
+}
+
 type DashboardStats struct {
-	QuoteCount    int64   `json:"quoteCount"`
-	DraftCount    int64   `json:"draftCount"`
-	SentCount     int64   `json:"sentCount"`
-	WonCount      int64   `json:"wonCount"`
-	TemplateCount int64   `json:"templateCount"`
-	MonthTotalAmt float64 `json:"monthTotalAmt"`
+	QuoteCount           int64   `json:"quoteCount"`
+	DraftCount           int64   `json:"draftCount"`
+	SentCount            int64   `json:"sentCount"`
+	WonCount             int64   `json:"wonCount"`
+	TemplateCount        int64   `json:"templateCount"`
+	MonthTotalAmt        float64 `json:"monthTotalAmt"`
+	SecondEditApplyCount int64   `json:"secondEditApplyCount"`
 }

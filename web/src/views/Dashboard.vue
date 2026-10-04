@@ -13,6 +13,7 @@ const stats = ref<DashboardStats>({
   wonCount: 0,
   templateCount: 0,
   monthTotalAmt: 0,
+  secondEditApplyCount: 0,
 })
 const loading = ref(false)
 
@@ -41,6 +42,10 @@ onMounted(load)
       <el-card shadow="never" class="stat"><div class="n">{{ stats.sentCount }}</div><div class="l">已发送</div></el-card>
       <el-card shadow="never" class="stat"><div class="n">{{ stats.wonCount }}</div><div class="l">已成交</div></el-card>
       <el-card shadow="never" class="stat"><div class="n">¥{{ stats.monthTotalAmt.toFixed(0) }}</div><div class="l">本月金额</div></el-card>
+      <el-card shadow="never" class="stat" style="cursor:pointer" @click="router.push({ path: '/quotes', query: { secondEdit: '1' } })">
+        <div class="n">{{ stats.secondEditApplyCount || 0 }}</div>
+        <div class="l">二次编辑申请</div>
+      </el-card>
     </div>
 
     <div class="card-grid">

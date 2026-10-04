@@ -47,6 +47,7 @@ func AutoMigrate(db *gorm.DB) error {
 			CREATE INDEX IF NOT EXISTS idx_quotes_tenant_no ON quotes (tenant_id, quote_no);
 			CREATE INDEX IF NOT EXISTS idx_quote_items_quote ON quote_items (quote_id, sort);
 			CREATE INDEX IF NOT EXISTS idx_quote_template_lines_tpl ON quote_template_lines (template_id, sort);
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_quotes_origin_second_edit ON quotes (origin_quote_id) WHERE origin_quote_id IS NOT NULL AND deleted_at IS NULL;
 		`).Error
 	}
 	return nil

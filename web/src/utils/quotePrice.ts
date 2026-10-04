@@ -1,16 +1,31 @@
 import type { QuoteItem } from '../api/quote'
 
-/** 与报价单「同产品规格」分组一致：相邻行 productId 相同，或名称相同。 */
+/** 相邻且同产品组、同配件名，视为同一配件的不同规格。 */
+export function isSamePartSpec(a: QuoteItem, b: QuoteItem): boolean {
+  const pa = (a.partName || '').trim()
+  const pb = (b.partName || '').trim()
+  if (!pa || pa !== pb) return false
+  return (a.category || '').trim() === (b.category || '').trim()
+}
+
+/** 相邻行 productId 相同、名称相同，或同配件多规格。 */
 export function isSameProductSpec(a: QuoteItem, b: QuoteItem): boolean {
   if (a.productId && b.productId) return Number(a.productId) === Number(b.productId)
   const na = (a.name || '').trim()
   const nb = (b.name || '').trim()
-  return na !== '' && na === nb
+  if (na && nb) return na === nb
+  return isSamePartSpec(a, b)
 }
 
 /** 每组同产品默认只选中第一行计价。 */
 export function defaultPricedFlags(items: QuoteItem[]): boolean[] {
   return items.map((it, idx) => idx === 0 || !isSameProductSpec(it, items[idx - 1]))
+}
+
+/** 顾客已保存勾选时按行标记；否则每组只计第一行。 */
+export function pricedFlagsFromSaved(items: QuoteItem[], saved?: boolean): boolean[] {
+  if (saved && items.some((it) => it.customerSelected)) return items.map((it) => !!it.customerSelected)
+  return defaultPricedFlags(items)
 }
 
 /** 同产品规格所在的连续行范围。 */
