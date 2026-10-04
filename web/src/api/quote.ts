@@ -258,6 +258,11 @@ export function isSkeletonTemplate(t?: QuoteTemplate | null): boolean {
   return Array.isArray(t.lines) && t.lines.length > 0
 }
 
+/** 明细带产品组/配件，按业务模板表格预览与分享。 */
+export function isBizQuoteItems(items?: { category?: string; partName?: string }[] | null): boolean {
+  return !!items?.some((it) => !!(it.partName || '').trim() || !!(it.category || '').trim())
+}
+
 export function seedItemsFromTemplate(t: QuoteTemplate): QuoteItem[] {
   const lines = [...(t.lines || [])].sort((a, b) => (a.sort || 0) - (b.sort || 0))
   return lines.map((ln, i) => ({

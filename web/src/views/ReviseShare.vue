@@ -11,9 +11,9 @@ import {
   uploadSecondEditImageFromUrl,
   type CustomerShareTemplate,
 } from '../api/publicShare'
-import type { QuoteItem, QuoteTemplate } from '../api/quote'
+import { isBizQuoteItems, type QuoteItem, type QuoteTemplate } from '../api/quote'
 import { copyElementAsImage, downloadElementAsPdf, downloadElementAsPng } from '../utils/exportQuote'
-import { pricedFlagsFromSaved, sumPriced } from '../utils/quotePrice'
+import { normalizeSpecLabel, pricedFlagsFromSaved, sumPriced } from '../utils/quotePrice'
 
 const route = useRoute()
 const token = computed(() => String(route.params.token || '').trim())
@@ -74,9 +74,7 @@ const sheetTemplate = computed<QuoteTemplate | null>(() => {
   }
 })
 
-const skeletonMode = computed(() =>
-  form.items.some((it) => !!(it.partName || '').trim() || !!(it.category || '').trim()),
-)
+const skeletonMode = computed(() => isBizQuoteItems(form.items))
 
 const priceFlags = computed(() => pricedFlagsFromSaved(form.items, true))
 const subtotal = computed(() =>
@@ -114,7 +112,7 @@ function mapItems(items: SecondEditItemLike[]): QuoteItem[] {
     category: it.category || '',
     partName: it.partName || '',
     name: it.name || '',
-    specLabel: it.specLabel || '',
+    specLabel: normalizeSpecLabel(it.specLabel),
     imageUrl: it.imageUrl || '',
     qty: Number(it.qty || 1),
     unit: it.unit || '件',
@@ -310,7 +308,7 @@ onMounted(load)
       <div class="sum">合计 ¥{{ total.toFixed(2) }}</div>
       <div class="export-host" aria-hidden="true">
         <div ref="exportRef" class="export-sheet-host">
-          <QuoteSheet :quote="previewQuote" :template="sheetTemplate" :price-flags="priceFlags" />
+          <QuoteSheet :quote="previewQuote" :template="sheetTemplate" :skeleton="skeletonMode" :price-flags="priceFlags" />
         </div>
       </div>
     </template>
@@ -327,7 +325,7 @@ onMounted(load)
       </div>
       <div class="preview-wrap">
         <div ref="previewRef" class="preview-sheet-host">
-          <QuoteSheet :quote="previewQuote" :template="sheetTemplate" :price-flags="priceFlags" />
+          <QuoteSheet :quote="previewQuote" :template="sheetTemplate" :skeleton="skeletonMode" :price-flags="priceFlags" />
         </div>
       </div>
       <template #footer>

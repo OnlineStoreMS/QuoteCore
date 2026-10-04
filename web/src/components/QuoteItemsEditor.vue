@@ -3,7 +3,7 @@ import { FullScreen } from '@element-plus/icons-vue'
 import { ref } from 'vue'
 import type { QuoteItem } from '../api/quote'
 import { isQuoteStoredUrl, uploadImage, uploadImageFromUrl } from '../api/upload'
-import { isSamePartSpec, isSameProductSpec } from '../utils/quotePrice'
+import { isSamePartSpec, isSameProductSpec, normalizeSpecLabel } from '../utils/quotePrice'
 import { ElMessage } from 'element-plus'
 
 const props = withDefaults(
@@ -290,6 +290,43 @@ function openImage(url?: string) {
   emit('previewImage', u)
 }
 
+function specText(row: QuoteItem): string {
+  return normalizeSpecLabel(row.specLabel)
+}
+
+function setSpecText(row: QuoteItem, v: string) {
+  row.specLabel = normalizeSpecLabel(v)
+}
+
+const tmpRowKeys = new WeakMap<object, string>()
+let tmpRowSeq = 0
+function tableRowKey(row: QuoteItem) {
+  if (row.id) return `id-${row.id}`
+  let k = tmpRowKeys.get(row)
+  if (!k) {
+    k = `tmp-${++tmpRowSeq}`
+    tmpRowKeys.set(row, k)
+  }
+  return k
+}
+
+function moneyText(n: unknown): string {
+  if (n == null || n === '') return ''
+  const num = Number(n)
+  if (!Number.isFinite(num) || num === 0) return ''
+  return String(n)
+}
+
+function setMoney(row: QuoteItem, key: 'quotePrice' | 'retailPrice' | 'costPrice', v: string) {
+  const t = (v ?? '').trim()
+  if (!t) {
+    row[key] = 0
+    return
+  }
+  const num = Number(t)
+  row[key] = Number.isFinite(num) ? num : 0
+}
+
 function formatSupplyAt(raw?: string | null) {
   if (!raw) return ''
   const d = new Date(raw)
@@ -304,7 +341,7 @@ function formatSupplyAt(raw?: string | null) {
     <div v-if="showZoomBtn" class="editor-toolbar">
       <el-button type="primary" plain :icon="FullScreen" @click="emit('zoom')">放大编辑</el-button>
     </div>
-    <el-table :data="items" border :size="large ? 'default' : 'small'" row-key="sort" class="items-table">
+    <el-table :data="items" border :size="large ? 'default' : 'small'" :row-key="tableRowKey" class="items-table">
       <template v-if="skeleton">
         <el-table-column label="产品（组）" :width="large ? 120 : 100">
           <template #default="{ row, $index }">
@@ -355,7 +392,15 @@ function formatSupplyAt(raw?: string | null) {
       </template>
 
       <el-table-column label="规格" :min-width="large ? 200 : 130">
-        <template #default="{ row }"><el-input v-model="row.specLabel" placeholder="规格" type="textarea" :rows="large ? 2 : 1" /></template>
+        <template #default="{ row }">
+          <el-input
+            :model-value="specText(row)"
+            type="textarea"
+            :rows="large ? 2 : 1"
+            placeholder="颜色 / 尺码等，可留空"
+            @update:model-value="(v: string) => setSpecText(row, v)"
+          />
+        </template>
       </el-table-column>
       <el-table-column label="图" :width="large ? 140 : 112">
         <template #default="{ row, $index }">
@@ -405,17 +450,32 @@ function formatSupplyAt(raw?: string | null) {
       </el-table-column>
       <el-table-column :label="skeleton ? '优惠价' : '报价'" :width="large ? 130 : 110">
         <template #default="{ row }">
-          <el-input v-model.number="row.quotePrice" inputmode="decimal" placeholder="0.00" />
+          <el-input
+            :model-value="moneyText(row.quotePrice)"
+            inputmode="decimal"
+            placeholder=""
+            @update:model-value="(v: string) => setMoney(row, 'quotePrice', v)"
+          />
         </template>
       </el-table-column>
       <el-table-column label="零售价" :width="large ? 130 : 110">
         <template #default="{ row }">
-          <el-input v-model.number="row.retailPrice" inputmode="decimal" placeholder="0.00" />
+          <el-input
+            :model-value="moneyText(row.retailPrice)"
+            inputmode="decimal"
+            placeholder=""
+            @update:model-value="(v: string) => setMoney(row, 'retailPrice', v)"
+          />
         </template>
       </el-table-column>
       <el-table-column v-if="!publicMode" label="成本价" :width="large ? 130 : 110">
         <template #default="{ row }">
-          <el-input v-model.number="row.costPrice" inputmode="decimal" placeholder="0.00" />
+          <el-input
+            :model-value="moneyText(row.costPrice)"
+            inputmode="decimal"
+            placeholder=""
+            @update:model-value="(v: string) => setMoney(row, 'costPrice', v)"
+          />
         </template>
       </el-table-column>
       <el-table-column v-if="!publicMode" label="拿货价" :width="large ? 150 : 128">

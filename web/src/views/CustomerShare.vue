@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import QuoteSheet from '../components/QuoteSheet.vue'
 import { applySecondEdit, fetchCustomerShare, openSecondEdit, saveCustomerPriced, type CustomerShareQuote } from '../api/publicShare'
-import type { QuoteItem, QuoteTemplate } from '../api/quote'
+import { isBizQuoteItems, type QuoteItem, type QuoteTemplate } from '../api/quote'
 import { defaultPricedFlags, sumPriced } from '../utils/quotePrice'
 
 const route = useRoute()
@@ -44,7 +44,7 @@ const template = computed<QuoteTemplate | null>(() => {
   return {
     id: 0,
     name: t.shopName || '默认版式',
-    kind: 'layout',
+    kind: isBizQuoteItems(data.value?.items) ? 'skeleton' : 'layout',
     isDefault: true,
     logoUrl: t.logoUrl || '',
     shopName: t.shopName || '报价中心',
@@ -300,6 +300,7 @@ onBeforeUnmount(() => {
               v-model:price-flags="priceFlags"
               :quote="quote"
               :template="template"
+              :skeleton="isBizQuoteItems(quote.items)"
               interactive
               pick-prices
               @preview-image="openPreview"

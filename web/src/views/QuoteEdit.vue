@@ -11,6 +11,7 @@ import {
   getQuote,
   approveSecondEdit,
   getSecondEditQuote,
+  isBizQuoteItems,
   isSkeletonTemplate,
   listTemplates,
   saveQuote,
@@ -23,7 +24,7 @@ import {
   type SkuHit,
 } from '../api/quote'
 import { copyElementAsImage, downloadElementAsPdf, downloadElementAsPng, waitForImages } from '../utils/exportQuote'
-import { pricedFlagsFromSaved, sumPriced } from '../utils/quotePrice'
+import { normalizeSpecLabel, pricedFlagsFromSaved, sumPriced } from '../utils/quotePrice'
 
 const route = useRoute()
 const router = useRouter()
@@ -192,7 +193,7 @@ const selectedBizId = ref<number | null>(null)
 
 const skeletonMode = computed(() => {
   if (selectedBizId.value) return true
-  return form.items.some((it) => !!(it.partName || '').trim() || !!(it.category || '').trim())
+  return isBizQuoteItems(form.items)
 })
 
 const layoutTemplates = computed(() => templates.value.filter((t) => !isSkeletonTemplate(t)))
@@ -340,7 +341,7 @@ async function loadQuote() {
       category: it.category || '',
       partName: it.partName || '',
       name: it.name,
-      specLabel: it.specLabel || '',
+      specLabel: normalizeSpecLabel(it.specLabel),
       imageUrl: it.imageUrl || '',
       qty: it.qty || 1,
       unit: it.unit || '件',
@@ -419,7 +420,7 @@ function mapSavedItem(it: QuoteItem, i: number): QuoteItem {
     category: it.category || '',
     partName: it.partName || '',
     name: it.name,
-    specLabel: it.specLabel || '',
+    specLabel: normalizeSpecLabel(it.specLabel),
     imageUrl: it.imageUrl || '',
     qty: it.qty || 1,
     unit: it.unit || '件',
@@ -598,7 +599,7 @@ function pickSku(s: SkuHit) {
     productId: s.productId,
     skuId: s.skuId,
     name: head?.name || s.productName,
-    specLabel: s.specLabel || s.skuCode || '',
+    specLabel: normalizeSpecLabel(s.specLabel || s.skuCode || ''),
     imageUrl: s.pic || s.productPic || '',
     retailPrice: s.price || 0,
     quotePrice: s.price || 0,
@@ -699,7 +700,7 @@ async function openSecondEditPreview() {
       ...it,
       sort: it.sort || (i + 1) * 10,
       name: it.name || '',
-      specLabel: it.specLabel || '',
+      specLabel: normalizeSpecLabel(it.specLabel),
       imageUrl: it.imageUrl || '',
       qty: it.qty || 1,
       unit: it.unit || '件',
@@ -1029,7 +1030,7 @@ onBeforeUnmount(() => {
     <!-- 离屏导出：不依赖预览弹窗，避免 Dialog transform 裁切与剪贴板手势丢失 -->
     <div class="export-host" aria-hidden="true">
       <div ref="exportRef" class="export-sheet-host">
-        <QuoteSheet :quote="previewQuote" :template="sheetTemplate" :price-flags="priceFlags" />
+        <QuoteSheet :quote="previewQuote" :template="sheetTemplate" :skeleton="skeletonMode" :price-flags="priceFlags" />
       </div>
     </div>
 
@@ -1047,7 +1048,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="preview-wrap">
         <div ref="previewRef" class="preview-sheet-host">
-          <QuoteSheet :quote="previewQuote" :template="sheetTemplate" :price-flags="priceFlags" />
+          <QuoteSheet :quote="previewQuote" :template="sheetTemplate" :skeleton="skeletonMode" :price-flags="priceFlags" />
         </div>
       </div>
       <template #footer>
@@ -1081,6 +1082,7 @@ onBeforeUnmount(() => {
           <QuoteSheet
             :quote="secondPreviewQuote"
             :template="sheetTemplate"
+            :skeleton="isBizQuoteItems(secondPreviewQuote.items)"
             :price-flags="pricedFlagsFromSaved(secondPreviewQuote.items, true)"
           />
         </div>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { QuoteItem, QuoteTemplate } from '../api/quote'
-import { isSkeletonTemplate } from '../api/quote'
+import { isBizQuoteItems, isSkeletonTemplate } from '../api/quote'
 import { defaultPricedFlags, isSamePartSpec, isSameProductSpec, productGroupRange, selectOnlySpec, sumPriced } from '../utils/quotePrice'
 
 const props = defineProps<{
@@ -27,6 +27,8 @@ const props = defineProps<{
   /** 顾客分享页：勾选哪些规格计入合计 */
   pickPrices?: boolean
   priceFlags?: boolean[] | null
+  /** 业务模板明细：产品组 / 名称 / 配件 版式 */
+  skeleton?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -40,7 +42,12 @@ function emitPreview(url?: string) {
   emit('preview-image', u)
 }
 
-const skeleton = computed(() => isSkeletonTemplate(props.template))
+const skeleton = computed(
+  () =>
+    props.skeleton === true ||
+    isSkeletonTemplate(props.template) ||
+    isBizQuoteItems(props.quote.items),
+)
 const showRetail = computed(() => props.template?.showRetailPrice !== false)
 const specColStyle = computed(() =>
   showRetail.value
@@ -157,6 +164,7 @@ function choosePrice(idx: number) {
           <th style="width:72px">优惠价</th>
           <th v-if="showRetail" style="width:72px">零售价</th>
           <th v-if="template?.showSpecImage !== false" style="width:56px">图</th>
+          <th v-if="pickPrices" style="width:88px">计价</th>
           <th style="width:90px">备注</th>
         </tr>
         <tr v-else>
@@ -175,7 +183,7 @@ function choosePrice(idx: number) {
           <tr
             v-for="(it, idx) in quote.items"
             :key="idx"
-            :class="{ 'spec-row': !isCategoryHead(idx), 'product-head': isCategoryHead(idx) }"
+            :class="{ 'spec-row': !isCategoryHead(idx), 'product-head': isCategoryHead(idx), 'off-price': pickPrices && !pricedFlags[idx] }"
           >
             <td class="cell-no" data-label="#">{{ idx + 1 }}</td>
             <td data-label="产品">{{ isCategoryHead(idx) ? (it.category || '—') : '' }}</td>
@@ -189,7 +197,10 @@ function choosePrice(idx: number) {
               <div v-else class="spec-cont">└ 同配件规格</div>
             </td>
             <td data-label="规格"><span class="spec-label">{{ it.specLabel || '—' }}</span></td>
-            <td data-label="优惠价">{{ money(it.quotePrice) }}</td>
+            <td data-label="优惠价">
+              <span v-if="pricedFlags[idx]">{{ money(it.quotePrice) }}</span>
+              <span v-else class="skip">{{ money(it.quotePrice) }}</span>
+            </td>
             <td v-if="showRetail" data-label="零售价">{{ money(it.retailPrice) }}</td>
             <td v-if="template?.showSpecImage !== false" class="cell-img" data-label="图">
               <button
@@ -202,6 +213,18 @@ function choosePrice(idx: number) {
                 <img :src="it.imageUrl" class="thumb" alt="" crossorigin="anonymous" />
               </button>
               <img v-else-if="it.imageUrl" :src="it.imageUrl" class="thumb" alt="" crossorigin="anonymous" />
+            </td>
+            <td v-if="pickPrices" class="line-total" data-label="计价">
+              <label class="pick">
+                <input
+                  type="radio"
+                  :name="'spec-' + groupHead(idx)"
+                  :checked="!!pricedFlags[idx]"
+                  @change="choosePrice(idx)"
+                />
+                <span v-if="pricedFlags[idx]">计入</span>
+                <span v-else class="skip">不计</span>
+              </label>
             </td>
             <td data-label="备注">{{ it.remark || '' }}</td>
           </tr>
@@ -276,7 +299,15 @@ function choosePrice(idx: number) {
       <div v-if="quote.taxAmt">税费：{{ money(quote.taxAmt) }}</div>
       <div class="grand">合计（{{ quote.currency || 'CNY' }}）：{{ money(displayTotal) }}</div>
       <div v-if="hasOptionalSpec" class="note">
-        {{ pickPrices ? '同产品规格为单选，改选后合计自动更新。' : '同产品多规格默认只计第一个，其余不重复加总。' }}
+        {{
+          pickPrices
+            ? skeleton
+              ? '同产品、同配件多规格为单选，改选后合计自动更新。'
+              : '同产品规格为单选，改选后合计自动更新。'
+            : skeleton
+              ? '同产品、同配件多规格默认只计第一个，其余不重复加总。'
+              : '同产品多规格默认只计第一个，其余不重复加总。'
+        }}
       </div>
     </section>
 

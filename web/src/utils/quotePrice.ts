@@ -1,5 +1,15 @@
 import type { QuoteItem } from '../api/quote'
 
+/** 规格是文本。数字 0 / 0.00 视为未填，避免输入框默认出金额。 */
+export function normalizeSpecLabel(v: unknown): string {
+  if (v == null) return ''
+  if (typeof v === 'number') return v === 0 ? '' : String(v)
+  const s = String(v)
+  const t = s.trim()
+  if (!t || t === '0' || t === '0.0' || t === '0.00') return ''
+  return s
+}
+
 /** 相邻且同产品组、同配件名，视为同一配件的不同规格。 */
 export function isSamePartSpec(a: QuoteItem, b: QuoteItem): boolean {
   const pa = (a.partName || '').trim()
