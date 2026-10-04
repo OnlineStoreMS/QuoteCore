@@ -153,6 +153,7 @@ onMounted(() => {
             :template="template"
             interactive
             pick-prices
+            responsive
             @preview-image="openPreview"
           />
         </div>
@@ -178,10 +179,11 @@ onMounted(() => {
   box-sizing: border-box;
 }
 .sheet-scroll {
-  overflow-x: auto;
+  display: flex;
+  justify-content: center;
 }
 .sheet-wrap {
-  width: 794px;
+  width: min(794px, 100%);
   margin: 0 auto;
   box-shadow: 0 8px 28px rgba(16, 24, 40, 0.08);
 }

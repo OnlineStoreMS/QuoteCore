@@ -92,51 +92,66 @@ onMounted(load)
 
 <template>
   <div class="share-page" v-loading="loading">
-    <header class="hero">
-      <div class="brand">报价中心</div>
-      <h1>{{ title || '填写拿货价' }}</h1>
-      <p v-if="quoteNo" class="meta">单号 {{ quoteNo }}</p>
-      <p v-if="remark" class="remark">{{ remark }}</p>
-    </header>
+    <div class="frame">
+      <header class="hero">
+        <div class="brand">报价中心</div>
+        <h1>{{ title || '填写拿货价' }}</h1>
+        <p v-if="quoteNo" class="meta">单号 {{ quoteNo }}</p>
+        <p v-if="remark" class="remark">{{ remark }}</p>
+      </header>
 
-    <main class="list">
-      <article v-for="row in rows" :key="row.id" class="card">
-        <button
-          v-if="row.imageUrl"
-          type="button"
-          class="thumb"
-          @click="openPreview(row.imageUrl)"
-        >
-          <img :src="row.imageUrl" alt="" />
-        </button>
-        <div v-else class="thumb empty">无图</div>
-        <div class="body">
-          <div class="name">{{ displaySpec(row) }}</div>
+      <div v-if="rows.length" class="cols-head">
+        <span></span>
+        <span>规格</span>
+        <span>拿货价</span>
+        <span>备注</span>
+      </div>
+
+      <main class="list">
+        <article v-for="row in rows" :key="row.id" class="card">
+          <button
+            v-if="row.imageUrl"
+            type="button"
+            class="thumb"
+            @click="openPreview(row.imageUrl)"
+          >
+            <img :src="row.imageUrl" alt="" />
+          </button>
+          <div v-else class="thumb empty">无图</div>
+          <div class="spec-col">
+            <div class="name">{{ displaySpec(row) }}</div>
+            <div v-if="row.name && row.name !== displaySpec(row)" class="subname">{{ row.name }}</div>
+          </div>
           <label class="price-label">
-            <span>拿货价（元）</span>
-            <input
-              v-model.number="row.draftPrice"
-              type="number"
-              inputmode="decimal"
-              min="0"
-              step="0.01"
-              placeholder="请输入"
-            />
+            <span class="field-name">拿货价</span>
+            <div class="money-input">
+              <span class="yen">¥</span>
+              <input
+                v-model.number="row.draftPrice"
+                type="number"
+                inputmode="decimal"
+                min="0"
+                step="0.01"
+                placeholder="请输入"
+              />
+            </div>
           </label>
           <label class="price-label">
-            <span>备注</span>
+            <span class="field-name">备注</span>
             <textarea v-model="row.draftRemark" rows="2" placeholder="选填，如交期、说明等" />
           </label>
-        </div>
-      </article>
+        </article>
 
-      <div v-if="!loading && !rows.length" class="empty-hint">暂无规格明细</div>
-    </main>
+        <div v-if="!loading && !rows.length" class="empty-hint">暂无规格明细</div>
+      </main>
+    </div>
 
     <footer class="bar">
-      <button type="button" class="submit" :disabled="submitting || !rows.length" @click="onSubmit">
-        {{ submitting ? '提交中…' : submitted ? '再次提交' : '提交拿货价' }}
-      </button>
+      <div class="bar-inner">
+        <button type="button" class="submit" :disabled="submitting || !rows.length" @click="onSubmit">
+          {{ submitting ? '提交中…' : submitted ? '再次提交' : '提交拿货价' }}
+        </button>
+      </div>
     </footer>
 
     <teleport to="body">
@@ -149,15 +164,23 @@ onMounted(load)
 
 <style scoped>
 .share-page {
-  min-height: 100vh;
+  height: 100%;
+  overflow: auto;
   background: linear-gradient(180deg, #e8f0ea 0%, #f6f7f8 28%, #f6f7f8 100%);
   padding: 20px 16px 96px;
   box-sizing: border-box;
   font-family: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
   color: #1f2a24;
 }
+.frame {
+  width: min(1040px, 100%);
+  margin: 0 auto;
+}
 .hero {
   margin-bottom: 16px;
+}
+.cols-head {
+  display: none;
 }
 .brand {
   font-size: 13px;
@@ -191,12 +214,15 @@ h1 {
 .card {
   display: grid;
   grid-template-columns: 88px 1fr;
-  gap: 12px;
+  gap: 8px 12px;
   background: #fff;
   border-radius: 12px;
   padding: 12px;
   box-shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
 }
+.thumb { grid-row: span 3; }
+.spec-col { grid-column: 2; align-self: center; }
+.price-label { grid-column: 2; }
 .thumb {
   width: 88px;
   height: 88px;
@@ -226,6 +252,11 @@ h1 {
   font-weight: 600;
   line-height: 1.4;
 }
+.subname {
+  margin-top: 2px;
+  font-size: 13px;
+  color: #6b7280;
+}
 .spec {
   margin-top: 4px;
   font-size: 13px;
@@ -240,14 +271,30 @@ h1 {
   font-size: 12px;
   color: #4b5563;
 }
-.price-label input {
+.money-input {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   height: 40px;
   border: 1px solid #d1d5db;
   border-radius: 8px;
   padding: 0 12px;
+  background: #fafafa;
+}
+.yen {
+  color: #374151;
+  font-size: 16px;
+  font-weight: 600;
+}
+.money-input input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  padding: 0;
   font-size: 16px;
   outline: none;
-  background: #fafafa;
+  background: transparent;
 }
 .price-label textarea {
   border: 1px solid #d1d5db;
@@ -260,7 +307,7 @@ h1 {
   font-family: inherit;
   line-height: 1.4;
 }
-.price-label input:focus,
+.money-input:focus-within,
 .price-label textarea:focus {
   border-color: #3d6b4f;
   background: #fff;
@@ -280,6 +327,10 @@ h1 {
   backdrop-filter: blur(8px);
   border-top: 1px solid #e5e7eb;
 }
+.bar-inner {
+  width: min(1040px, 100%);
+  margin: 0 auto;
+}
 .submit {
   width: 100%;
   height: 46px;
@@ -294,6 +345,45 @@ h1 {
 .submit:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+@media (min-width: 880px) {
+  .share-page { padding: 28px 24px 108px; }
+  .cols-head {
+    display: grid;
+    grid-template-columns: 88px minmax(160px, 1.4fr) 200px minmax(180px, 1fr);
+    gap: 16px;
+    padding: 0 16px 8px;
+    color: #6b7280;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .list {
+    background: #fff;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
+  }
+  .card {
+    grid-template-columns: 88px minmax(160px, 1.4fr) 200px minmax(180px, 1fr);
+    gap: 16px;
+    align-items: center;
+    border-radius: 0;
+    box-shadow: none;
+    border-bottom: 1px solid #eef0f2;
+  }
+  .card:last-child { border-bottom: 0; }
+  .thumb { grid-row: auto; width: 72px; height: 72px; }
+  .spec-col,
+  .price-label { grid-column: auto; margin-top: 0; }
+  .field-name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+  .price-label textarea { min-height: 72px; }
+  .submit { width: 240px; margin-left: auto; display: block; }
 }
 .lightbox {
   position: fixed;

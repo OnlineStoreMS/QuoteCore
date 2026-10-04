@@ -27,6 +27,8 @@ const props = defineProps<{
   /** 顾客分享页：勾选哪些规格计入合计 */
   pickPrices?: boolean
   priceFlags?: boolean[] | null
+  /** 分享页：窄屏改成卡片，宽屏保持报价单表格 */
+  responsive?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -53,7 +55,7 @@ const specColStyle = computed(() =>
 )
 
 function money(v: number) {
-  return Number(v || 0).toFixed(2)
+  return '¥' + Number(v || 0).toFixed(2)
 }
 
 function sameProduct(a: QuoteItem, b: QuoteItem): boolean {
@@ -111,7 +113,7 @@ function choosePrice(idx: number) {
 </script>
 
 <template>
-  <div class="sheet">
+  <div class="sheet" :class="{ responsive }">
     <header class="head">
       <div class="brand">
         <img v-if="template?.showLogo !== false && template?.logoUrl" :src="template.logoUrl" class="logo" alt="logo" crossorigin="anonymous" />
@@ -166,18 +168,18 @@ function choosePrice(idx: number) {
             :key="idx"
             :class="{ 'spec-row': !isCategoryHead(idx), 'product-head': isCategoryHead(idx) }"
           >
-            <td>{{ idx + 1 }}</td>
-            <td>{{ isCategoryHead(idx) ? (it.category || '—') : '' }}</td>
-            <td>
+            <td class="cell-no" data-label="#">{{ idx + 1 }}</td>
+            <td data-label="产品">{{ isCategoryHead(idx) ? (it.category || '—') : '' }}</td>
+            <td data-label="名称">
               <template v-if="isCategoryHead(idx)">
                 <div class="name">{{ it.name || '—' }}</div>
               </template>
             </td>
-            <td>{{ it.partName || '—' }}</td>
-            <td><span class="spec-label">{{ it.specLabel || '—' }}</span></td>
-            <td>{{ money(it.quotePrice) }}</td>
-            <td v-if="showRetail">{{ money(it.retailPrice) }}</td>
-            <td v-if="template?.showSpecImage !== false">
+            <td data-label="配件">{{ it.partName || '—' }}</td>
+            <td data-label="规格"><span class="spec-label">{{ it.specLabel || '—' }}</span></td>
+            <td data-label="优惠价">{{ money(it.quotePrice) }}</td>
+            <td v-if="showRetail" data-label="零售价">{{ money(it.retailPrice) }}</td>
+            <td v-if="template?.showSpecImage !== false" class="cell-img" data-label="图">
               <button
                 v-if="interactive && it.imageUrl"
                 type="button"
@@ -189,7 +191,7 @@ function choosePrice(idx: number) {
               </button>
               <img v-else-if="it.imageUrl" :src="it.imageUrl" class="thumb" alt="" crossorigin="anonymous" />
             </td>
-            <td>{{ it.remark || '' }}</td>
+            <td data-label="备注">{{ it.remark || '' }}</td>
           </tr>
         </template>
         <template v-else>
@@ -198,8 +200,8 @@ function choosePrice(idx: number) {
             :key="idx"
             :class="{ 'spec-row': !isProductHead(idx), 'product-head': isProductHead(idx), 'off-price': pickPrices && !pricedFlags[idx] }"
           >
-            <td>{{ idx + 1 }}</td>
-            <td v-if="template?.showSpecImage !== false">
+            <td class="cell-no" data-label="#">{{ idx + 1 }}</td>
+            <td v-if="template?.showSpecImage !== false" class="cell-img" data-label="图">
               <button
                 v-if="interactive && it.imageUrl"
                 type="button"
@@ -211,7 +213,7 @@ function choosePrice(idx: number) {
               </button>
               <img v-else-if="it.imageUrl" :src="it.imageUrl" class="thumb" alt="" crossorigin="anonymous" />
             </td>
-            <td>
+            <td data-label="产品">
               <template v-if="isProductHead(idx)">
                 <div class="name">{{ it.name }}</div>
                 <div v-if="template?.showUpgrade !== false && it.upgradeNote" class="muted">升级：{{ it.upgradeNote }}</div>
@@ -225,13 +227,13 @@ function choosePrice(idx: number) {
                 <div v-if="it.remark" class="muted">备注：{{ it.remark }}</div>
               </template>
             </td>
-            <td>
+            <td data-label="规格">
               <span class="spec-label">{{ it.specLabel || '—' }}</span>
             </td>
-            <td>{{ it.qty }}{{ it.unit }}</td>
-            <td v-if="showRetail">{{ money(it.retailPrice) }}</td>
-            <td>{{ money(it.quotePrice) }}</td>
-            <td class="line-total">
+            <td data-label="数量">{{ it.qty }}{{ it.unit }}</td>
+            <td v-if="showRetail" data-label="零售价">{{ money(it.retailPrice) }}</td>
+            <td data-label="报价">{{ money(it.quotePrice) }}</td>
+            <td class="line-total" :data-label="pickPrices ? '计价' : '小计'">
               <label v-if="pickPrices" class="pick">
                 <input
                   type="radio"
@@ -256,11 +258,11 @@ function choosePrice(idx: number) {
     </table>
 
     <section v-if="template?.showTotals !== false" class="totals">
-      <div>商品小计：¥{{ money(displaySubtotal) }}</div>
-      <div v-if="quote.discountAmt">折扣：-¥{{ money(quote.discountAmt) }}</div>
-      <div v-if="quote.shippingAmt">运费：¥{{ money(quote.shippingAmt) }}</div>
-      <div v-if="quote.taxAmt">税费：¥{{ money(quote.taxAmt) }}</div>
-      <div class="grand">合计（{{ quote.currency || 'CNY' }}）：¥{{ money(displayTotal) }}</div>
+      <div>商品小计：{{ money(displaySubtotal) }}</div>
+      <div v-if="quote.discountAmt">折扣：-{{ money(quote.discountAmt) }}</div>
+      <div v-if="quote.shippingAmt">运费：{{ money(quote.shippingAmt) }}</div>
+      <div v-if="quote.taxAmt">税费：{{ money(quote.taxAmt) }}</div>
+      <div class="grand">合计（{{ quote.currency || 'CNY' }}）：{{ money(displayTotal) }}</div>
       <div v-if="hasOptionalSpec" class="note">
         {{ pickPrices ? '同产品规格为单选，改选后合计自动更新。' : '同产品多规格默认只计第一个，其余不重复加总。' }}
       </div>
@@ -323,6 +325,57 @@ function choosePrice(idx: number) {
 }
 .pick input { width: 18px; height: 18px; margin: 0; flex: 0 0 auto; accent-color: #1f2329; }
 tr.off-price td { color: #8f959e; }
+.sheet.responsive { width: 100%; max-width: 794px; min-height: 0; }
+@media (max-width: 860px) {
+  .sheet.responsive {
+    padding: 16px 12px 20px;
+    font-size: 14px;
+  }
+  .sheet.responsive .head { flex-direction: column; align-items: flex-start; }
+  .sheet.responsive .meta { text-align: left; }
+  .sheet.responsive .title { font-size: 18px; }
+  .sheet.responsive .party { grid-template-columns: 1fr; }
+  .sheet.responsive .items,
+  .sheet.responsive .items tbody { display: block; width: 100%; }
+  .sheet.responsive .items { table-layout: auto; }
+  .sheet.responsive .items thead { display: none; }
+  .sheet.responsive .items tr {
+    display: block;
+    margin-bottom: 12px;
+    border: 1px solid #d0d3d6;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #fff;
+  }
+  .sheet.responsive .items tr.spec-row td { background: transparent; }
+  .sheet.responsive .items td {
+    display: block;
+    width: auto !important;
+    border: 0;
+    border-top: 1px solid #f0f1f2;
+    padding: 8px 12px;
+  }
+  .sheet.responsive .items td.cell-no,
+  .sheet.responsive .items tr.empty,
+  .sheet.responsive .items td.empty { display: none; }
+  .sheet.responsive .items td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 2px;
+    color: #8f959e;
+    font-size: 12px;
+  }
+  .sheet.responsive .items td.cell-img {
+    border-top: 0;
+    padding-bottom: 4px;
+  }
+  .sheet.responsive .items td.cell-img::before { display: none; }
+  .sheet.responsive .items td.cell-img .thumb { width: 96px; height: 96px; }
+  .sheet.responsive .pick { min-height: 40px; }
+  .sheet.responsive .pick input { width: 22px; height: 22px; }
+  .sheet.responsive .totals { text-align: left; }
+  .sheet.responsive .totals .grand { font-size: 18px; }
+}
 .remark { margin-top: 12px; color: #646a73; }
 .foot { margin-top: 16px; padding-top: 10px; border-top: 1px dashed #d0d3d6; color: #8f959e; white-space: pre-wrap; }
 </style>
