@@ -443,12 +443,12 @@ function formatSupplyAt(raw?: string | null) {
           </div>
         </template>
       </el-table-column>
-      <el-table-column v-if="!skeleton" label="数量" :width="large ? 120 : 90">
+      <el-table-column label="数量" :width="large ? 120 : 90">
         <template #default="{ row }">
           <el-input-number v-model="row.qty" :min="0.01" :step="1" controls-position="right" style="width:100%" />
         </template>
       </el-table-column>
-      <el-table-column :label="skeleton ? '优惠价' : '报价'" :width="large ? 130 : 110">
+      <el-table-column label="报价" :width="large ? 130 : 110">
         <template #default="{ row }">
           <el-input
             :model-value="moneyText(row.quotePrice)"

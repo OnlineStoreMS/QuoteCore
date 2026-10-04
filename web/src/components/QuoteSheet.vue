@@ -157,15 +157,15 @@ function choosePrice(idx: number) {
       <thead>
         <tr v-if="skeleton">
           <th style="width:36px">#</th>
+          <th v-if="template?.showSpecImage !== false" style="width:56px">图</th>
           <th style="width:72px">产品</th>
-          <th style="width:150px">名称</th>
+          <th style="width:140px">名称</th>
           <th style="width:72px">配件</th>
           <th :style="specColStyle">规格</th>
-          <th style="width:72px">优惠价</th>
+          <th style="width:56px">数量</th>
           <th v-if="showRetail" style="width:72px">零售价</th>
-          <th v-if="template?.showSpecImage !== false" style="width:56px">图</th>
-          <th v-if="pickPrices" style="width:88px">计价</th>
-          <th style="width:90px">备注</th>
+          <th style="width:72px">报价</th>
+          <th style="width:88px">{{ pickPrices ? '计价' : '小计' }}</th>
         </tr>
         <tr v-else>
           <th style="width:36px">#</th>
@@ -186,22 +186,6 @@ function choosePrice(idx: number) {
             :class="{ 'spec-row': !isCategoryHead(idx), 'product-head': isCategoryHead(idx), 'off-price': pickPrices && !pricedFlags[idx] }"
           >
             <td class="cell-no" data-label="#">{{ idx + 1 }}</td>
-            <td data-label="产品">{{ isCategoryHead(idx) ? (it.category || '—') : '' }}</td>
-            <td data-label="名称">
-              <template v-if="isCategoryHead(idx)">
-                <div class="name">{{ it.name || '—' }}</div>
-              </template>
-            </td>
-            <td data-label="配件">
-              <template v-if="isPartHead(idx)">{{ it.partName || '—' }}</template>
-              <div v-else class="spec-cont">└ 同配件规格</div>
-            </td>
-            <td data-label="规格"><span class="spec-label">{{ it.specLabel || '—' }}</span></td>
-            <td data-label="优惠价">
-              <span v-if="pricedFlags[idx]">{{ money(it.quotePrice) }}</span>
-              <span v-else class="skip">{{ money(it.quotePrice) }}</span>
-            </td>
-            <td v-if="showRetail" data-label="零售价">{{ money(it.retailPrice) }}</td>
             <td v-if="template?.showSpecImage !== false" class="cell-img" data-label="图">
               <button
                 v-if="interactive && it.imageUrl"
@@ -214,19 +198,39 @@ function choosePrice(idx: number) {
               </button>
               <img v-else-if="it.imageUrl" :src="it.imageUrl" class="thumb" alt="" crossorigin="anonymous" />
             </td>
-            <td v-if="pickPrices" class="line-total" data-label="计价">
-              <label class="pick">
+            <td data-label="产品">{{ isCategoryHead(idx) ? (it.category || '—') : '' }}</td>
+            <td data-label="名称">
+              <template v-if="isCategoryHead(idx)">
+                <div class="name">{{ it.name || '—' }}</div>
+              </template>
+              <div v-if="template?.showUpgrade !== false && it.upgradeNote" class="muted">升级：{{ it.upgradeNote }}</div>
+              <div v-if="template?.showParams !== false && it.paramsText" class="muted">参数：{{ it.paramsText }}</div>
+              <div v-if="it.remark" class="muted">备注：{{ it.remark }}</div>
+            </td>
+            <td data-label="配件">
+              <template v-if="isPartHead(idx)">{{ it.partName || '—' }}</template>
+              <div v-else class="spec-cont">└ 同配件规格</div>
+            </td>
+            <td data-label="规格"><span class="spec-label">{{ it.specLabel || '—' }}</span></td>
+            <td data-label="数量">{{ it.qty }}{{ it.unit }}</td>
+            <td v-if="showRetail" data-label="零售价">{{ money(it.retailPrice) }}</td>
+            <td data-label="报价">{{ money(it.quotePrice) }}</td>
+            <td class="line-total" :data-label="pickPrices ? '计价' : '小计'">
+              <label v-if="pickPrices" class="pick">
                 <input
                   type="radio"
                   :name="'spec-' + groupHead(idx)"
                   :checked="!!pricedFlags[idx]"
                   @change="choosePrice(idx)"
                 />
-                <span v-if="pricedFlags[idx]">计入</span>
+                <span v-if="pricedFlags[idx]">{{ money(it.qty * it.quotePrice) }}</span>
                 <span v-else class="skip">不计</span>
               </label>
+              <template v-else>
+                <span v-if="pricedFlags[idx]">{{ money(it.qty * it.quotePrice) }}</span>
+                <span v-else class="skip">不计</span>
+              </template>
             </td>
-            <td data-label="备注">{{ it.remark || '' }}</td>
           </tr>
         </template>
         <template v-else>
