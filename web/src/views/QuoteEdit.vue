@@ -21,6 +21,7 @@ import {
   type SkuHit,
 } from '../api/quote'
 import { copyElementAsImage, downloadElementAsPdf, downloadElementAsPng, waitForImages } from '../utils/exportQuote'
+import { defaultPricedFlags, sumPriced } from '../utils/quotePrice'
 
 const route = useRoute()
 const router = useRouter()
@@ -121,16 +122,16 @@ const form = reactive({
   items: [] as QuoteItem[],
 })
 
+const priceFlags = computed(() => defaultPricedFlags(form.items))
+const hasOptionalSpec = computed(() => priceFlags.value.some((on) => !on))
 const subtotal = computed(() =>
-  form.items.reduce((s, it) => s + Number(it.qty || 0) * Number(it.quotePrice || 0), 0),
+  sumPriced(form.items, priceFlags.value, (it) => Number(it.qty || 0) * Number(it.quotePrice || 0)),
 )
 const retailTotal = computed(() =>
-  Math.round(form.items.reduce((s, it) => s + Number(it.qty || 0) * Number(it.retailPrice || 0), 0) * 100) / 100,
+  sumPriced(form.items, priceFlags.value, (it) => Number(it.qty || 0) * Number(it.retailPrice || 0)),
 )
 const costTotal = computed(() =>
-  Math.round(
-    form.items.reduce((s, it) => s + Number(it.qty || 0) * effectiveCostPrice(it), 0) * 100,
-  ) / 100,
+  sumPriced(form.items, priceFlags.value, (it) => Number(it.qty || 0) * effectiveCostPrice(it)),
 )
 const total = computed(() =>
   Math.round((subtotal.value - Number(form.discountAmt || 0) + Number(form.shippingAmt || 0) + Number(form.taxAmt || 0)) * 100) / 100,
@@ -848,7 +849,7 @@ onBeforeUnmount(() => {
           <div class="sum">
             <div>零售价合计：¥{{ retailTotal.toFixed(2) }}</div>
             <div>成本合计：¥{{ costTotal.toFixed(2) }} <span class="sum-tip">有拿货价时按拿货价</span></div>
-            <div>报价小计：¥{{ subtotal.toFixed(2) }}</div>
+            <div>报价小计：¥{{ subtotal.toFixed(2) }} <span v-if="hasOptionalSpec" class="sum-tip">同产品只计第一个规格</span></div>
             <div class="profit">预估利润：¥{{ profit.toFixed(2) }}</div>
             <div class="grand">合计：¥{{ total.toFixed(2) }}</div>
           </div>

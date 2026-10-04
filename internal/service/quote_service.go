@@ -394,7 +394,13 @@ func buildItems(tenantID, quoteID uint64, reqs []dto.QuoteItemReq) ([]model.Quot
 			unit = "件"
 		}
 		lineTotal := round2(qty * r.QuotePrice)
-		subtotal += lineTotal
+		item := model.QuoteItem{
+			ProductID: r.ProductID,
+			Name:      name,
+		}
+		if n := len(items); n == 0 || !sameProductSpec(items[n-1], item) {
+			subtotal += lineTotal
+		}
 		sort := r.Sort
 		if sort == 0 {
 			sort = (i + 1) * 10
@@ -436,6 +442,24 @@ func buildItems(tenantID, quoteID uint64, reqs []dto.QuoteItemReq) ([]model.Quot
 		})
 	}
 	return items, round2(subtotal), nil
+}
+
+// sameProductSpec matches the sheet grouping: adjacent rows of one product are alternative specs.
+// Only the first spec is included in 商品小计 / 合计.
+func sameProductSpec(a, b model.QuoteItem) bool {
+	aID, bID := uint64(0), uint64(0)
+	if a.ProductID != nil {
+		aID = *a.ProductID
+	}
+	if b.ProductID != nil {
+		bID = *b.ProductID
+	}
+	if aID > 0 && bID > 0 {
+		return aID == bID
+	}
+	an := strings.TrimSpace(a.Name)
+	bn := strings.TrimSpace(b.Name)
+	return an != "" && an == bn
 }
 
 func (s *QuoteService) snapTemplate(tenantID uint64, templateID *uint64) (string, *uint64, error) {

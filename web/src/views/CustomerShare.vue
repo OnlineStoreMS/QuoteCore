@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import QuoteSheet from '../components/QuoteSheet.vue'
 import { fetchCustomerShare, type CustomerShareQuote } from '../api/publicShare'
 import type { QuoteItem, QuoteTemplate } from '../api/quote'
-
-const SHEET_W = 794
+import { defaultPricedFlags, sumPriced } from '../utils/quotePrice'
 
 const route = useRoute()
 const token = computed(() => String(route.params.token || '').trim())
@@ -15,10 +14,7 @@ const error = ref('')
 const data = ref<CustomerShareQuote | null>(null)
 const previewUrl = ref('')
 const showPreview = ref(false)
-const viewportEl = ref<HTMLElement | null>(null)
-const sheetWrap = ref<HTMLElement | null>(null)
-const scale = ref(1)
-const sheetH = ref(640)
+const priceFlags = ref<boolean[]>([])
 
 const template = computed<QuoteTemplate | null>(() => {
   const t = data.value?.template
@@ -87,20 +83,24 @@ const hasImage = computed(() =>
   quote.value.items.some((it) => !!(it.imageUrl || '').trim()) && template.value?.showSpecImage !== false,
 )
 
-const fitStyle = computed(() => ({
-  width: `${Math.round(SHEET_W * scale.value)}px`,
-  height: `${Math.round(sheetH.value * scale.value)}px`,
-}))
+const liveTotal = computed(() => {
+  const sub = sumPriced(quote.value.items, priceFlags.value.length ? priceFlags.value : defaultPricedFlags(quote.value.items), (it) =>
+    Number(it.qty || 0) * Number(it.quotePrice || 0),
+  )
+  return (
+    Math.round(
+      (sub - Number(quote.value.discountAmt || 0) + Number(quote.value.shippingAmt || 0) + Number(quote.value.taxAmt || 0)) * 100,
+    ) / 100
+  )
+})
 
-function measure() {
-  const vw = viewportEl.value?.clientWidth || window.innerWidth
-  const avail = Math.max(280, vw - 8)
-  scale.value = Math.min(1, avail / SHEET_W)
-  const h = sheetWrap.value?.offsetHeight
-  if (h && h > 0) sheetH.value = h
-}
-
-let ro: ResizeObserver | null = null
+watch(data, (q) => {
+  if (!q) {
+    priceFlags.value = []
+    return
+  }
+  priceFlags.value = defaultPricedFlags(quote.value.items)
+})
 
 function openPreview(url: string) {
   const u = (url || '').trim()
@@ -131,46 +131,33 @@ async function load() {
     data.value = null
   } finally {
     loading.value = false
-    await nextTick()
-    measure()
   }
 }
 
 onMounted(() => {
-  ro = new ResizeObserver(() => measure())
-  if (viewportEl.value) ro.observe(viewportEl.value)
-  window.addEventListener('resize', measure)
   void load()
-})
-
-watch(sheetWrap, (el, prev) => {
-  if (prev && ro) ro.unobserve(prev)
-  if (el && ro) ro.observe(el)
-  measure()
-})
-
-onBeforeUnmount(() => {
-  ro?.disconnect()
-  window.removeEventListener('resize', measure)
 })
 </script>
 
 <template>
-  <div ref="viewportEl" class="page">
+  <div class="page">
     <div v-if="loading" class="state">正在打开报价单…</div>
     <div v-else-if="error" class="state error">{{ error }}</div>
     <template v-else>
-      <p v-if="hasImage" class="hint">点击规格图片可查看大图</p>
-      <div class="fit" :style="fitStyle">
-        <div ref="sheetWrap" class="sheet-wrap" :style="{ transform: `scale(${scale})` }">
+      <p class="hint">同产品多个规格默认勾选第一个计价，可按需要改选。{{ hasImage ? '点击规格图片可查看大图。' : '' }}</p>
+      <div class="sheet-scroll">
+        <div class="sheet-wrap">
           <QuoteSheet
+            v-model:price-flags="priceFlags"
             :quote="quote"
             :template="template"
             interactive
+            pick-prices
             @preview-image="openPreview"
           />
         </div>
       </div>
+      <div class="live-total">合计 ¥{{ liveTotal.toFixed(2) }}</div>
     </template>
 
     <teleport to="body">
@@ -187,22 +174,38 @@ onBeforeUnmount(() => {
   height: 100%;
   overflow: auto;
   background: #eef0f3;
-  padding: 16px 8px 32px;
+  padding: 16px 8px 72px;
   box-sizing: border-box;
 }
-.fit {
-  margin: 0 auto;
+.sheet-scroll {
+  overflow-x: auto;
 }
 .sheet-wrap {
   width: 794px;
-  transform-origin: top left;
+  margin: 0 auto;
   box-shadow: 0 8px 28px rgba(16, 24, 40, 0.08);
 }
 .hint {
   margin: 0 auto 10px;
+  max-width: 794px;
   text-align: center;
   color: #646a73;
   font-size: 13px;
+  line-height: 1.5;
+}
+.live-total {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  background: rgba(255, 255, 255, 0.96);
+  border-top: 1px solid #e5e7eb;
+  text-align: right;
+  font-size: 18px;
+  font-weight: 700;
+  color: #1f2329;
 }
 .state {
   min-height: 40vh;

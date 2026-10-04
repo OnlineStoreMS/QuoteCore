@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import type { QuoteItem, QuoteTemplate } from '../api/quote'
 import { isSkeletonTemplate } from '../api/quote'
+import { defaultPricedFlags, sumPriced } from '../utils/quotePrice'
 
 const props = defineProps<{
   quote: {
@@ -23,10 +24,14 @@ const props = defineProps<{
   template?: QuoteTemplate | null
   /** 顾客分享页：规格图可点开预览 */
   interactive?: boolean
+  /** 顾客分享页：勾选哪些规格计入合计 */
+  pickPrices?: boolean
+  priceFlags?: boolean[] | null
 }>()
 
 const emit = defineEmits<{
   'preview-image': [url: string]
+  'update:priceFlags': [flags: boolean[]]
 }>()
 
 function emitPreview(url?: string) {
@@ -73,6 +78,34 @@ function isCategoryHead(idx: number): boolean {
   const prev = props.quote.items[idx - 1]
   if (!(cur.category || '').trim()) return true
   return !sameCategory(cur, prev)
+}
+
+const pricedFlags = computed(() => {
+  const items = props.quote.items
+  if (props.priceFlags && props.priceFlags.length === items.length) return props.priceFlags
+  return defaultPricedFlags(items)
+})
+
+const hasOptionalSpec = computed(() => pricedFlags.value.some((on) => !on))
+
+const displaySubtotal = computed(() =>
+  sumPriced(props.quote.items, pricedFlags.value, (it) => Number(it.qty || 0) * Number(it.quotePrice || 0)),
+)
+
+const displayTotal = computed(() =>
+  Math.round(
+    (displaySubtotal.value
+      - Number(props.quote.discountAmt || 0)
+      + Number(props.quote.shippingAmt || 0)
+      + Number(props.quote.taxAmt || 0)) * 100,
+  ) / 100,
+)
+
+function togglePrice(idx: number, ev: Event) {
+  const checked = (ev.target as HTMLInputElement).checked
+  const next = pricedFlags.value.slice()
+  next[idx] = checked
+  emit('update:priceFlags', next)
 }
 </script>
 
@@ -122,7 +155,7 @@ function isCategoryHead(idx: number): boolean {
           <th style="width:56px">数量</th>
           <th v-if="showRetail" style="width:72px">零售价</th>
           <th style="width:72px">报价</th>
-          <th style="width:80px">小计</th>
+          <th style="width:88px">{{ pickPrices ? '计价' : '小计' }}</th>
         </tr>
       </thead>
       <tbody>
@@ -162,7 +195,7 @@ function isCategoryHead(idx: number): boolean {
           <tr
             v-for="(it, idx) in quote.items"
             :key="idx"
-            :class="{ 'spec-row': !isProductHead(idx), 'product-head': isProductHead(idx) }"
+            :class="{ 'spec-row': !isProductHead(idx), 'product-head': isProductHead(idx), 'off-price': pickPrices && !pricedFlags[idx] }"
           >
             <td>{{ idx + 1 }}</td>
             <td v-if="template?.showSpecImage !== false">
@@ -197,7 +230,17 @@ function isCategoryHead(idx: number): boolean {
             <td>{{ it.qty }}{{ it.unit }}</td>
             <td v-if="showRetail">{{ money(it.retailPrice) }}</td>
             <td>{{ money(it.quotePrice) }}</td>
-            <td>{{ money(it.qty * it.quotePrice) }}</td>
+            <td class="line-total">
+              <label v-if="pickPrices" class="pick">
+                <input type="checkbox" :checked="!!pricedFlags[idx]" @change="togglePrice(idx, $event)" />
+                <span v-if="pricedFlags[idx]">{{ money(it.qty * it.quotePrice) }}</span>
+                <span v-else class="skip">不计</span>
+              </label>
+              <template v-else>
+                <span v-if="pricedFlags[idx]">{{ money(it.qty * it.quotePrice) }}</span>
+                <span v-else class="skip">不计</span>
+              </template>
+            </td>
           </tr>
         </template>
         <tr v-if="!quote.items.length">
@@ -207,11 +250,14 @@ function isCategoryHead(idx: number): boolean {
     </table>
 
     <section v-if="template?.showTotals !== false" class="totals">
-      <div>商品小计：¥{{ money(quote.subtotalAmt) }}</div>
+      <div>商品小计：¥{{ money(displaySubtotal) }}</div>
       <div v-if="quote.discountAmt">折扣：-¥{{ money(quote.discountAmt) }}</div>
       <div v-if="quote.shippingAmt">运费：¥{{ money(quote.shippingAmt) }}</div>
       <div v-if="quote.taxAmt">税费：¥{{ money(quote.taxAmt) }}</div>
-      <div class="grand">合计（{{ quote.currency || 'CNY' }}）：¥{{ money(quote.totalAmt) }}</div>
+      <div class="grand">合计（{{ quote.currency || 'CNY' }}）：¥{{ money(displayTotal) }}</div>
+      <div v-if="hasOptionalSpec" class="note">
+        {{ pickPrices ? '勾选规格后合计自动更新。同产品默认只计第一个规格。' : '同产品多规格默认只计第一个，其余不重复加总。' }}
+      </div>
     </section>
 
     <section v-if="quote.remark" class="remark">整单备注：{{ quote.remark }}</section>
@@ -260,6 +306,17 @@ function isCategoryHead(idx: number): boolean {
 .items tr.spec-row td { background: #fafbfc; }
 .totals { margin-top: 12px; text-align: right; }
 .totals .grand { font-size: 16px; font-weight: 700; margin-top: 4px; }
+.totals .note { margin-top: 6px; color: #8f959e; font-size: 11px; font-weight: 400; }
+.line-total .skip { color: #8f959e; }
+.pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  cursor: pointer;
+}
+.pick input { width: 18px; height: 18px; margin: 0; flex: 0 0 auto; }
+tr.off-price td { color: #8f959e; }
 .remark { margin-top: 12px; color: #646a73; }
 .foot { margin-top: 16px; padding-top: 10px; border-top: 1px dashed #d0d3d6; color: #8f959e; white-space: pre-wrap; }
 </style>
