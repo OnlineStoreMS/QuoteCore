@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import QuoteSheet from '../components/QuoteSheet.vue'
 import { fetchCustomerShare, type CustomerShareQuote } from '../api/publicShare'
@@ -134,8 +134,23 @@ async function load() {
   }
 }
 
+const VIEWPORT = 'width=device-width, initial-scale=1.0'
+const SHARE_VIEWPORT = 'width=840, initial-scale=1, maximum-scale=5, user-scalable=yes'
+
+function shareViewport() {
+  const meta = document.querySelector('meta[name="viewport"]')
+  if (!meta) return
+  if (window.matchMedia('(max-width: 900px)').matches) meta.setAttribute('content', SHARE_VIEWPORT)
+}
+
+shareViewport()
+
 onMounted(() => {
   void load()
+})
+
+onBeforeUnmount(() => {
+  document.querySelector('meta[name="viewport"]')?.setAttribute('content', VIEWPORT)
 })
 </script>
 
@@ -144,7 +159,7 @@ onMounted(() => {
     <div v-if="loading" class="state">正在打开报价单…</div>
     <div v-else-if="error" class="state error">{{ error }}</div>
     <template v-else>
-      <p class="hint">同产品多个规格只能选一个，默认选中第一个。{{ hasImage ? '点击规格图片可查看大图。' : '' }}</p>
+      <p class="hint">同产品多个规格只能选一个，默认选中第一个。可双指缩放查看。{{ hasImage ? '点击规格图片可查看大图。' : '' }}</p>
       <div class="sheet-scroll">
         <div class="sheet-wrap">
           <QuoteSheet
@@ -153,7 +168,6 @@ onMounted(() => {
             :template="template"
             interactive
             pick-prices
-            responsive
             @preview-image="openPreview"
           />
         </div>
@@ -183,7 +197,7 @@ onMounted(() => {
   justify-content: center;
 }
 .sheet-wrap {
-  width: min(794px, 100%);
+  width: 794px;
   margin: 0 auto;
   box-shadow: 0 8px 28px rgba(16, 24, 40, 0.08);
 }

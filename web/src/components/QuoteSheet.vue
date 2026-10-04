@@ -27,8 +27,6 @@ const props = defineProps<{
   /** 顾客分享页：勾选哪些规格计入合计 */
   pickPrices?: boolean
   priceFlags?: boolean[] | null
-  /** 分享页：窄屏改成卡片，宽屏保持报价单表格 */
-  responsive?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -113,7 +111,7 @@ function choosePrice(idx: number) {
 </script>
 
 <template>
-  <div class="sheet" :class="{ responsive }">
+  <div class="sheet">
     <header class="head">
       <div class="brand">
         <img v-if="template?.showLogo !== false && template?.logoUrl" :src="template.logoUrl" class="logo" alt="logo" crossorigin="anonymous" />
@@ -325,57 +323,6 @@ function choosePrice(idx: number) {
 }
 .pick input { width: 18px; height: 18px; margin: 0; flex: 0 0 auto; accent-color: #1f2329; }
 tr.off-price td { color: #8f959e; }
-.sheet.responsive { width: 100%; max-width: 794px; min-height: 0; }
-@media (max-width: 860px) {
-  .sheet.responsive {
-    padding: 16px 12px 20px;
-    font-size: 14px;
-  }
-  .sheet.responsive .head { flex-direction: column; align-items: flex-start; }
-  .sheet.responsive .meta { text-align: left; }
-  .sheet.responsive .title { font-size: 18px; }
-  .sheet.responsive .party { grid-template-columns: 1fr; }
-  .sheet.responsive .items,
-  .sheet.responsive .items tbody { display: block; width: 100%; }
-  .sheet.responsive .items { table-layout: auto; }
-  .sheet.responsive .items thead { display: none; }
-  .sheet.responsive .items tr {
-    display: block;
-    margin-bottom: 12px;
-    border: 1px solid #d0d3d6;
-    border-radius: 10px;
-    overflow: hidden;
-    background: #fff;
-  }
-  .sheet.responsive .items tr.spec-row td { background: transparent; }
-  .sheet.responsive .items td {
-    display: block;
-    width: auto !important;
-    border: 0;
-    border-top: 1px solid #f0f1f2;
-    padding: 8px 12px;
-  }
-  .sheet.responsive .items td.cell-no,
-  .sheet.responsive .items tr.empty,
-  .sheet.responsive .items td.empty { display: none; }
-  .sheet.responsive .items td::before {
-    content: attr(data-label);
-    display: block;
-    margin-bottom: 2px;
-    color: #8f959e;
-    font-size: 12px;
-  }
-  .sheet.responsive .items td.cell-img {
-    border-top: 0;
-    padding-bottom: 4px;
-  }
-  .sheet.responsive .items td.cell-img::before { display: none; }
-  .sheet.responsive .items td.cell-img .thumb { width: 96px; height: 96px; }
-  .sheet.responsive .pick { min-height: 40px; }
-  .sheet.responsive .pick input { width: 22px; height: 22px; }
-  .sheet.responsive .totals { text-align: left; }
-  .sheet.responsive .totals .grand { font-size: 18px; }
-}
 .remark { margin-top: 12px; color: #646a73; }
 .foot { margin-top: 16px; padding-top: 10px; border-top: 1px dashed #d0d3d6; color: #8f959e; white-space: pre-wrap; }
 </style>
