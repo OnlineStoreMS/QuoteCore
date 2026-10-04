@@ -59,6 +59,7 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	publicGroup := v1.Group("/public")
 	publicGroup.GET("/share/:token", pub.GetShare)
 	publicGroup.POST("/share/:token/submit", pub.SubmitSupply)
+	publicGroup.GET("/customer/:token", pub.GetCustomerShare)
 
 	return r
 }

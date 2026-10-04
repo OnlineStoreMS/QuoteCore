@@ -21,7 +21,19 @@ const props = defineProps<{
     items: QuoteItem[]
   }
   template?: QuoteTemplate | null
+  /** 顾客分享页：规格图可点开预览 */
+  interactive?: boolean
 }>()
+
+const emit = defineEmits<{
+  'preview-image': [url: string]
+}>()
+
+function emitPreview(url?: string) {
+  const u = (url || '').trim()
+  if (!u || !props.interactive) return
+  emit('preview-image', u)
+}
 
 const skeleton = computed(() => isSkeletonTemplate(props.template))
 const showRetail = computed(() => props.template?.showRetailPrice !== false)
@@ -132,7 +144,16 @@ function isCategoryHead(idx: number): boolean {
             <td>{{ money(it.quotePrice) }}</td>
             <td v-if="showRetail">{{ money(it.retailPrice) }}</td>
             <td v-if="template?.showSpecImage !== false">
-              <img v-if="it.imageUrl" :src="it.imageUrl" class="thumb" alt="" crossorigin="anonymous" />
+              <button
+                v-if="interactive && it.imageUrl"
+                type="button"
+                class="thumb-btn"
+                aria-label="查看规格图"
+                @click="emitPreview(it.imageUrl)"
+              >
+                <img :src="it.imageUrl" class="thumb" alt="" crossorigin="anonymous" />
+              </button>
+              <img v-else-if="it.imageUrl" :src="it.imageUrl" class="thumb" alt="" crossorigin="anonymous" />
             </td>
             <td>{{ it.remark || '' }}</td>
           </tr>
@@ -145,7 +166,16 @@ function isCategoryHead(idx: number): boolean {
           >
             <td>{{ idx + 1 }}</td>
             <td v-if="template?.showSpecImage !== false">
-              <img v-if="it.imageUrl" :src="it.imageUrl" class="thumb" alt="" crossorigin="anonymous" />
+              <button
+                v-if="interactive && it.imageUrl"
+                type="button"
+                class="thumb-btn"
+                aria-label="查看规格图"
+                @click="emitPreview(it.imageUrl)"
+              >
+                <img :src="it.imageUrl" class="thumb" alt="" crossorigin="anonymous" />
+              </button>
+              <img v-else-if="it.imageUrl" :src="it.imageUrl" class="thumb" alt="" crossorigin="anonymous" />
             </td>
             <td>
               <template v-if="isProductHead(idx)">
@@ -216,6 +246,16 @@ function isCategoryHead(idx: number): boolean {
 .items .muted, .spec-cont { color: #8f959e; font-size: 11px; margin-top: 2px; }
 .items .spec-label { word-break: break-all; }
 .items .thumb { width: 40px; height: 40px; object-fit: cover; display: block; border-radius: 2px; }
+.thumb-btn {
+  display: block;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  cursor: zoom-in;
+  line-height: 0;
+}
+.thumb-btn:focus-visible { outline: 2px solid #3d6b4f; outline-offset: 1px; }
 .items .empty { text-align: center; color: #8f959e; }
 .items tr.spec-row td { background: #fafbfc; }
 .totals { margin-top: 12px; text-align: right; }

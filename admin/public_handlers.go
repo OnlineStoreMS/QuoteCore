@@ -29,6 +29,16 @@ func (h *PublicHandlers) GetShare(c *gin.Context) {
 	response.OK(c, view)
 }
 
+func (h *PublicHandlers) GetCustomerShare(c *gin.Context) {
+	token := strings.TrimSpace(c.Param("token"))
+	view, err := h.svc.GetCustomerShareByToken(token)
+	if err != nil {
+		mapPublicError(c, err)
+		return
+	}
+	response.OK(c, view)
+}
+
 type submitSupplyReq struct {
 	Items []service.SupplyPriceSubmitItem `json:"items"`
 }

@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -738,6 +739,28 @@ func (s *QuoteService) EnsureShareToken(tenantID, id uint64) (*model.Quote, erro
 	return q, nil
 }
 
+// EnsureCustomerShareToken creates a customer-facing share token if missing.
+// It is separate from the supplier token so the public quote page cannot submit supply prices.
+func (s *QuoteService) EnsureCustomerShareToken(tenantID, id uint64) (*model.Quote, error) {
+	q, err := s.GetQuote(tenantID, id)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(q.CustomerShareToken) != "" {
+		return q, nil
+	}
+	tok, err := randomShareToken()
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repos.DB.Model(&model.Quote{}).Where("id = ? AND tenant_id = ?", id, repo.NormalizeTenantID(tenantID)).
+		Update("customer_share_token", tok).Error; err != nil {
+		return nil, err
+	}
+	q.CustomerShareToken = tok
+	return q, nil
+}
+
 type ShareQuoteView struct {
 	Title   string          `json:"title"`
 	QuoteNo string          `json:"quoteNo"`
@@ -854,4 +877,185 @@ func (s *QuoteService) SubmitSupplyPrices(token string, rows []SupplyPriceSubmit
 		}
 		return nil
 	})
+}
+
+// CustomerShareTemplate is the default layout template shown on the customer page.
+type CustomerShareTemplate struct {
+	LogoURL         string `json:"logoUrl"`
+	ShopName        string `json:"shopName"`
+	ShopPhone       string `json:"shopPhone"`
+	ShopAddress     string `json:"shopAddress"`
+	HeaderSubtitle  string `json:"headerSubtitle"`
+	FooterText      string `json:"footerText"`
+	ShowLogo        bool   `json:"showLogo"`
+	ShowRetailPrice bool   `json:"showRetailPrice"`
+	ShowSpecImage   bool   `json:"showSpecImage"`
+	ShowUpgrade     bool   `json:"showUpgrade"`
+	ShowParams      bool   `json:"showParams"`
+	ShowTotals      bool   `json:"showTotals"`
+	StylePreset     string `json:"stylePreset"`
+	Kind            string `json:"kind"`
+}
+
+// CustomerShareItem is a customer-safe line. Cost and supplier prices are omitted.
+type CustomerShareItem struct {
+	Sort        int     `json:"sort"`
+	ProductID   *uint64 `json:"productId,omitempty"`
+	Category    string  `json:"category"`
+	PartName    string  `json:"partName"`
+	Name        string  `json:"name"`
+	SpecLabel   string  `json:"specLabel"`
+	ImageURL    string  `json:"imageUrl"`
+	Qty         float64 `json:"qty"`
+	Unit        string  `json:"unit"`
+	RetailPrice float64 `json:"retailPrice"`
+	QuotePrice  float64 `json:"quotePrice"`
+	UpgradeNote string  `json:"upgradeNote"`
+	ParamsText  string  `json:"paramsText"`
+	Remark      string  `json:"remark"`
+}
+
+// CustomerShareView is the public quote page for a customer.
+type CustomerShareView struct {
+	Title        string                `json:"title"`
+	QuoteNo      string                `json:"quoteNo"`
+	CustomerName string                `json:"customerName"`
+	ContactName  string                `json:"contactName"`
+	ContactPhone string                `json:"contactPhone"`
+	Currency     string                `json:"currency"`
+	ValidUntil   *string               `json:"validUntil"`
+	Remark       string                `json:"remark"`
+	DiscountAmt  float64               `json:"discountAmt"`
+	ShippingAmt  float64               `json:"shippingAmt"`
+	TaxAmt       float64               `json:"taxAmt"`
+	SubtotalAmt  float64               `json:"subtotalAmt"`
+	TotalAmt     float64               `json:"totalAmt"`
+	Template     CustomerShareTemplate `json:"template"`
+	Items        []CustomerShareItem   `json:"items"`
+}
+
+func (s *QuoteService) defaultLayoutTemplate(tenantID uint64) (model.QuoteTemplate, error) {
+	tenantID = repo.NormalizeTenantID(tenantID)
+	var tpl model.QuoteTemplate
+	err := s.repos.DB.Where("tenant_id = ? AND is_default = ? AND kind <> ?", tenantID, true, model.TemplateKindSkeleton).
+		Order("id ASC").First(&tpl).Error
+	if err == nil {
+		return tpl, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return model.QuoteTemplate{}, err
+	}
+	err = s.repos.DB.Where("tenant_id = ? AND kind <> ?", tenantID, model.TemplateKindSkeleton).
+		Order("is_default DESC, id ASC").First(&tpl).Error
+	if err == nil {
+		return tpl, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return model.QuoteTemplate{}, err
+	}
+	return model.QuoteTemplate{
+		Kind:            model.TemplateKindLayout,
+		ShopName:        "报价中心",
+		ShowLogo:        true,
+		ShowRetailPrice: true,
+		ShowSpecImage:   true,
+		ShowUpgrade:     true,
+		ShowParams:      true,
+		ShowTotals:      true,
+		StylePreset:     "compare",
+	}, nil
+}
+
+func layoutTemplateView(tpl model.QuoteTemplate) CustomerShareTemplate {
+	kind := tpl.Kind
+	if kind == "" || kind == model.TemplateKindSkeleton {
+		kind = model.TemplateKindLayout
+	}
+	preset := strings.TrimSpace(tpl.StylePreset)
+	if preset == "" {
+		preset = "compare"
+	}
+	shop := strings.TrimSpace(tpl.ShopName)
+	if shop == "" {
+		shop = "报价中心"
+	}
+	return CustomerShareTemplate{
+		LogoURL:         strings.TrimSpace(tpl.LogoURL),
+		ShopName:        shop,
+		ShopPhone:       strings.TrimSpace(tpl.ShopPhone),
+		ShopAddress:     strings.TrimSpace(tpl.ShopAddress),
+		HeaderSubtitle:  strings.TrimSpace(tpl.HeaderSubtitle),
+		FooterText:      strings.TrimSpace(tpl.FooterText),
+		ShowLogo:        tpl.ShowLogo,
+		ShowRetailPrice: tpl.ShowRetailPrice,
+		ShowSpecImage:   tpl.ShowSpecImage,
+		ShowUpgrade:     tpl.ShowUpgrade,
+		ShowParams:      tpl.ShowParams,
+		ShowTotals:      tpl.ShowTotals,
+		StylePreset:     preset,
+		Kind:            kind,
+	}
+}
+
+func (s *QuoteService) GetCustomerShareByToken(token string) (*CustomerShareView, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, ErrNotFound
+	}
+	var q model.Quote
+	err := s.repos.DB.Where("customer_share_token = ?", token).Preload("Items", func(db *gorm.DB) *gorm.DB {
+		return db.Order("sort ASC, id ASC")
+	}).First(&q).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if q.Status == model.QuoteStatusVoid {
+		return nil, fmt.Errorf("%w: 报价单已作废", ErrBadRequest)
+	}
+	tpl, err := s.defaultLayoutTemplate(q.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	view := &CustomerShareView{
+		Title:        q.Title,
+		QuoteNo:      q.QuoteNo,
+		CustomerName: q.CustomerName,
+		ContactName:  q.ContactName,
+		ContactPhone: q.ContactPhone,
+		Currency:     q.Currency,
+		Remark:       q.Remark,
+		DiscountAmt:  q.DiscountAmt,
+		ShippingAmt:  q.ShippingAmt,
+		TaxAmt:       q.TaxAmt,
+		SubtotalAmt:  q.SubtotalAmt,
+		TotalAmt:     q.TotalAmt,
+		Template:     layoutTemplateView(tpl),
+		Items:        make([]CustomerShareItem, 0, len(q.Items)),
+	}
+	if q.ValidUntil != nil {
+		v := q.ValidUntil.Format("2006-01-02")
+		view.ValidUntil = &v
+	}
+	for _, it := range q.Items {
+		view.Items = append(view.Items, CustomerShareItem{
+			Sort:        it.Sort,
+			ProductID:   it.ProductID,
+			Category:    it.Category,
+			PartName:    it.PartName,
+			Name:        it.Name,
+			SpecLabel:   it.SpecLabel,
+			ImageURL:    it.ImageURL,
+			Qty:         it.Qty,
+			Unit:        it.Unit,
+			RetailPrice: it.RetailPrice,
+			QuotePrice:  it.QuotePrice,
+			UpgradeNote: it.UpgradeNote,
+			ParamsText:  it.ParamsText,
+			Remark:      it.Remark,
+		})
+	}
+	return view, nil
 }

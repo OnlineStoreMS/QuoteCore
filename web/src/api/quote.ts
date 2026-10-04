@@ -179,6 +179,12 @@ export function ensureShareToken(id: number) {
   )
 }
 
+export function ensureCustomerShareToken(id: number) {
+  return client.post(`/quotes/${id}/customer-share`).then((r) =>
+    unwrap<{ shareToken: string; quoteNo: string; quoteId: number }>(r),
+  )
+}
+
 /** 有供货商拿货价更新时，用拿货价作为该规格成本 */
 export function effectiveCostPrice(it: Pick<QuoteItem, 'costPrice' | 'supplyPrice' | 'supplyPriceAt'>): number {
   if (it.supplyPriceAt) return Number(it.supplyPrice || 0)

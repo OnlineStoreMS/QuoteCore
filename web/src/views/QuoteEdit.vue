@@ -6,6 +6,7 @@ import QuoteSheet from '../components/QuoteSheet.vue'
 import QuoteItemsEditor from '../components/QuoteItemsEditor.vue'
 import {
   effectiveCostPrice,
+  ensureCustomerShareToken,
   ensureShareToken,
   getQuote,
   isSkeletonTemplate,
@@ -646,6 +647,47 @@ async function doDownloadPdf() {
 }
 
 const sharing = ref(false)
+const sharingCustomer = ref(false)
+
+async function copyShareText(text: string, success: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success(success)
+  } catch {
+    await ElMessageBox.alert(text, '请复制分享内容', {
+      confirmButtonText: '知道了',
+      customClass: 'share-copy-box',
+    })
+  }
+}
+
+async function shareToCustomer() {
+  if (!quoteId.value) {
+    ElMessage.warning('请先保存报价单后再分享')
+    return
+  }
+  sharingCustomer.value = true
+  try {
+    if (canPersistItems()) {
+      await onSave(true)
+    }
+    const data = await ensureCustomerShareToken(quoteId.value)
+    const base = (import.meta.env.BASE_URL || '/').replace(/\/?$/, '/')
+    const url = `${window.location.origin}${base}customer/${data.shareToken}`
+    const title = (form.title || '').trim() || '报价单'
+    const quoteNo = (form.quoteNo || data.quoteNo || '').trim()
+    const text = [
+      '您好，',
+      `这是给您的报价单「${title}」${quoteNo ? `（${quoteNo}）` : ''}。`,
+      url,
+    ].join('\n')
+    await copyShareText(text, '顾客分享文案已复制')
+  } catch (e) {
+    ElMessage.error((e as Error).message || '生成分享链接失败')
+  } finally {
+    sharingCustomer.value = false
+  }
+}
 
 async function shareToSupplier() {
   if (!quoteId.value) {
@@ -668,15 +710,7 @@ async function shareToSupplier() {
       `麻烦看一下报价单「${title}」${quoteNo ? `（${quoteNo}）` : ''}的拿货价。`,
       url,
     ].join('\n')
-    try {
-      await navigator.clipboard.writeText(text)
-      ElMessage.success('分享文案已复制，可直接发给供货商')
-    } catch {
-      await ElMessageBox.alert(text, '请复制分享内容', {
-        confirmButtonText: '知道了',
-        customClass: 'share-copy-box',
-      })
-    }
+    await copyShareText(text, '分享文案已复制，可直接发给供货商')
   } catch (e) {
     ElMessage.error((e as Error).message || '生成分享链接失败')
   } finally {
@@ -719,6 +753,7 @@ onBeforeUnmount(() => {
         <span v-if="autoSaveHint" class="autosave-hint" :class="autoSaveStatus">{{ autoSaveHint }}</span>
       </div>
       <div class="right">
+        <el-button :loading="sharingCustomer" :disabled="!quoteId" @click="shareToCustomer">分享给顾客</el-button>
         <el-button :loading="sharing" :disabled="!quoteId" @click="shareToSupplier">分享给供货商</el-button>
         <el-button :loading="exporting" @click="showPreview = true">预览</el-button>
         <el-button :loading="exporting" @click="doCopyImage">复制图片</el-button>

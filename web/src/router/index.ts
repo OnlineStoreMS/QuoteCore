@@ -26,6 +26,12 @@ const router = createRouter({
       meta: { public: true },
     },
     {
+      path: '/customer/:token',
+      name: 'CustomerShare',
+      component: () => import('../views/CustomerShare.vue'),
+      meta: { public: true },
+    },
+    {
       path: '/',
       component: AdminLayout,
       redirect: '/dashboard',

@@ -234,6 +234,24 @@ func (h *Handlers) EnsureShare(c *gin.Context) {
 	})
 }
 
+func (h *Handlers) EnsureCustomerShare(c *gin.Context) {
+	id, err := httputil.ParseID(c)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	item, err := h.svc.EnsureCustomerShareToken(authcontext.TenantID(c), id)
+	if err != nil {
+		h.mapError(c, err)
+		return
+	}
+	response.OK(c, gin.H{
+		"shareToken": item.CustomerShareToken,
+		"quoteNo":    item.QuoteNo,
+		"quoteId":    item.ID,
+	})
+}
+
 func (h *Handlers) SearchCustomers(c *gin.Context) {
 	if h.cc == nil {
 		response.Fail(c, http.StatusServiceUnavailable, "客户中心未配置")
