@@ -23,6 +23,9 @@ const saving = ref(false)
 const exporting = ref(false)
 const error = ref('')
 const exportRef = ref<HTMLElement | null>(null)
+const previewRef = ref<HTMLElement | null>(null)
+const showPreview = ref(false)
+const previewShowRetailPrice = ref(true)
 const imagePreviewUrl = ref('')
 const showImagePreview = ref(false)
 const originNo = ref('')
@@ -61,7 +64,7 @@ const sheetTemplate = computed<QuoteTemplate | null>(() => {
     headerSubtitle: t.headerSubtitle || '',
     footerText: t.footerText || '',
     showLogo: t.showLogo !== false,
-    showRetailPrice: t.showRetailPrice !== false,
+    showRetailPrice: previewShowRetailPrice.value,
     showSpecImage: t.showSpecImage !== false,
     showUpgrade: t.showUpgrade !== false,
     showParams: t.showParams !== false,
@@ -164,6 +167,7 @@ function applyView(q: Awaited<ReturnType<typeof fetchSecondEdit>>) {
   form.taxAmt = q.taxAmt || 0
   form.items = mapItems(q.items || [])
   layout.value = q.template
+  previewShowRetailPrice.value = q.template?.showRetailPrice !== false
   document.title = `二次编辑 · ${q.title || '报价单'}`
 }
 
@@ -276,6 +280,7 @@ onMounted(load)
           <span class="meta">原单 {{ originNo || '—' }} · 本单 {{ quoteNo || '—' }}</span>
         </div>
         <div class="right">
+          <el-button :loading="exporting" @click="showPreview = true">预览</el-button>
           <el-button :loading="exporting" @click="doCopyImage">复制图片</el-button>
           <el-button :loading="exporting" @click="doDownloadPng">下载 PNG</el-button>
           <el-button :loading="exporting" @click="doDownloadPdf">下载 PDF</el-button>
@@ -309,6 +314,28 @@ onMounted(load)
         </div>
       </div>
     </template>
+    <el-dialog
+      v-model="showPreview"
+      title="报价预览"
+      width="860px"
+      top="4vh"
+      append-to-body
+    >
+      <div class="preview-toolbar">
+        <el-checkbox v-model="previewShowRetailPrice">显示零售价</el-checkbox>
+        <span class="preview-tip">关闭后预览 / 复制图片 / PDF 均不显示零售价</span>
+      </div>
+      <div class="preview-wrap">
+        <div ref="previewRef" class="preview-sheet-host">
+          <QuoteSheet :quote="previewQuote" :template="sheetTemplate" :price-flags="priceFlags" />
+        </div>
+      </div>
+      <template #footer>
+        <el-button :loading="exporting" @click="doCopyImage">复制图片</el-button>
+        <el-button :loading="exporting" @click="doDownloadPng">下载 PNG</el-button>
+        <el-button type="primary" :loading="exporting" @click="doDownloadPdf">下载 PDF</el-button>
+      </template>
+    </el-dialog>
     <el-dialog v-model="showImagePreview" title="图片预览" width="auto" append-to-body @closed="imagePreviewUrl = ''">
       <img v-if="imagePreviewUrl" :src="imagePreviewUrl" alt="预览" class="img-preview" />
     </el-dialog>
@@ -333,4 +360,8 @@ onMounted(load)
   pointer-events: none;
 }
 .img-preview { max-width: 80vw; max-height: 70vh; display: block; }
+.preview-wrap { overflow: auto; max-height: 70vh; background: #eef0f3; padding: 16px; display: flex; justify-content: center; }
+.preview-sheet-host { flex: 0 0 auto; max-width: 100%; }
+.preview-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.preview-tip { color: #909399; font-size: 12px; }
 </style>

@@ -9,6 +9,7 @@ import {
   ensureCustomerShareToken,
   ensureShareToken,
   getQuote,
+  approveSecondEdit,
   getSecondEditQuote,
   isSkeletonTemplate,
   listTemplates,
@@ -127,6 +128,7 @@ const form = reactive({
   originQuoteNo: '',
   secondEditApplicant: '',
   secondEditApplicantPhone: '',
+  secondEditApproved: false,
   items: [] as QuoteItem[],
 })
 
@@ -327,6 +329,7 @@ async function loadQuote() {
     form.originQuoteNo = q.originQuoteNo || ''
     form.secondEditApplicant = q.secondEditApplicant || ''
     form.secondEditApplicantPhone = q.secondEditApplicantPhone || ''
+    form.secondEditApproved = !!q.secondEditApproved
     form.items = (q.items || []).map((it, i) => ({
       id: it.id,
       sort: it.sort || (i + 1) * 10,
@@ -664,6 +667,22 @@ async function doDownloadPdf() {
   }
 }
 
+const approving = ref(false)
+
+async function onApproveSecondEdit() {
+  if (!quoteId.value) return
+  approving.value = true
+  try {
+    const q = await approveSecondEdit(quoteId.value)
+    form.secondEditApproved = !!q.secondEditApproved
+    ElMessage.success('已通过二次编辑申请，申请人可用原分享链接加电话打开编辑')
+  } catch (e) {
+    ElMessage.error((e as Error).message)
+  } finally {
+    approving.value = false
+  }
+}
+
 const sharing = ref(false)
 const sharingCustomer = ref(false)
 const showSecondPreview = ref(false)
@@ -820,11 +839,20 @@ onBeforeUnmount(() => {
       <div class="left">
         <el-button @click="router.push('/quotes')">返回</el-button>
         <strong>{{ quoteId ? `编辑 ${form.quoteNo}` : '新建报价' }}</strong>
-        <el-tag v-if="form.isSecondEdit" type="warning" size="small">二次编辑</el-tag>
+        <el-tag v-if="form.isSecondEdit && form.secondEditApproved" type="success" size="small">二次编辑已通过</el-tag>
+        <el-tag v-else-if="form.isSecondEdit" type="warning" size="small">二次编辑待审核</el-tag>
         <el-tag v-else-if="form.secondEditUsed" type="danger" size="small">已有二次编辑申请</el-tag>
         <span v-if="autoSaveHint" class="autosave-hint" :class="autoSaveStatus">{{ autoSaveHint }}</span>
       </div>
       <div class="right">
+        <el-button
+          v-if="form.isSecondEdit && !form.secondEditApproved"
+          type="success"
+          :loading="approving"
+          @click="onApproveSecondEdit"
+        >
+          通过审核
+        </el-button>
         <el-button :loading="sharingCustomer" :disabled="!quoteId" @click="shareToCustomer">分享给顾客</el-button>
         <el-button :loading="sharing" :disabled="!quoteId" @click="shareToSupplier">分享给供货商</el-button>
         <el-button
@@ -1038,6 +1066,7 @@ onBeforeUnmount(() => {
     >
       <p class="preview-tip" style="margin-bottom: 8px">
         申请人 {{ form.secondEditApplicant || '—' }} {{ form.secondEditApplicantPhone }}
+        {{ form.secondEditApproved ? '（已通过）' : '（待审核）' }}
         <el-button
           v-if="form.secondEditQuoteId"
           link

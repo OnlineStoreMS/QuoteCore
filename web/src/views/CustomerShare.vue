@@ -21,6 +21,8 @@ const priceFlags = ref<boolean[]>([])
 const savingFlags = ref(false)
 const saveHint = ref('')
 const secondEditUsed = ref(false)
+const secondEditApproved = ref(false)
+const isSecondEditShare = ref(false)
 const applyOpen = ref(false)
 const applying = ref(false)
 const applicant = reactive({ name: '', phone: '', note: '' })
@@ -119,9 +121,13 @@ watch(data, (q) => {
   if (!q) {
     priceFlags.value = []
     secondEditUsed.value = false
+    secondEditApproved.value = false
+    isSecondEditShare.value = false
     return
   }
-  secondEditUsed.value = !!q.secondEditUsed || !!q.isSecondEdit
+  isSecondEditShare.value = !!q.isSecondEdit
+  secondEditUsed.value = !!q.secondEditUsed && !q.isSecondEdit
+  secondEditApproved.value = !!q.secondEditApproved && !q.isSecondEdit
   const flags = q.pricedFlags && q.pricedFlags.length === quote.value.items.length
     ? q.pricedFlags.slice()
     : defaultPricedFlags(quote.value.items)
@@ -136,7 +142,9 @@ async function persistFlags(manual = false) {
   savingFlags.value = true
   try {
     const saved = await saveCustomerPriced(token.value, priceFlags.value)
-    secondEditUsed.value = !!saved.secondEditUsed || !!saved.isSecondEdit
+    isSecondEditShare.value = !!saved.isSecondEdit
+    secondEditUsed.value = !!saved.secondEditUsed && !saved.isSecondEdit
+    secondEditApproved.value = !!saved.secondEditApproved && !saved.isSecondEdit
     saveHint.value = '已保存勾选'
     if (manual) ElMessage.success('规格勾选已保存')
   } catch (e) {
@@ -192,16 +200,15 @@ async function submitApply() {
   applying.value = true
   try {
     await persistFlags(false)
-    const res = await applySecondEdit(token.value, {
+    await applySecondEdit(token.value, {
       applicantName: applicant.name.trim(),
       applicantPhone: applicant.phone.trim(),
       applicantNote: applicant.note.trim(),
     })
-    if (!res?.token) throw new Error('申请成功但未返回编辑链接')
     secondEditUsed.value = true
+    secondEditApproved.value = false
     applyOpen.value = false
-    ElMessage.success('申请已提交。之后可用本分享链接加申请电话再次打开。')
-    await router.push(`/revise/${res.token}`)
+    ElMessage.success('申请已提交，等待后台审核。通过后可用本分享链接加申请电话打开编辑。')
   } catch (e) {
     ElMessage.error((e as Error).message || '申请失败')
     if (String((e as Error).message || '').includes('已用完')) secondEditUsed.value = true
@@ -282,7 +289,10 @@ onBeforeUnmount(() => {
     <div v-if="loading" class="state">正在打开报价单…</div>
     <div v-else-if="error" class="state error">{{ error }}</div>
     <template v-else>
-      <p class="hint">同产品多个规格只能选一个，勾选后自动保存。双指放大可看清表格。{{ hasImage ? '点击规格图片查看大图。' : '' }}</p>
+      <p class="hint">
+        {{ isSecondEditShare ? '勾选规格后自动保存，合计会跟着变。双指放大可看清表格。' : '同产品多个规格只能选一个，勾选后自动保存。双指放大可看清表格。' }}
+        {{ hasImage ? '点击规格图片查看大图。' : '' }}
+      </p>
       <div class="sheet-scroll">
         <div class="fit" :style="fitStyle">
           <div ref="sheetEl" class="sheet-wrap" :style="{ transform: `scale(${scale})` }">
@@ -299,8 +309,8 @@ onBeforeUnmount(() => {
       </div>
       <div class="live-total">
         <div class="live-actions">
-          <button type="button" class="ghost" @click="openApply">
-            {{ secondEditUsed ? '查看我的二次编辑单' : '二次编辑分享' }}
+          <button v-if="!isSecondEditShare" type="button" class="ghost" @click="openApply">
+            {{ secondEditUsed ? (secondEditApproved ? '查看我的二次编辑单' : '二次编辑审核中') : '二次编辑分享' }}
           </button>
           <button type="button" class="save" :disabled="savingFlags" @click="persistFlags(true)">
             {{ savingFlags ? '保存中…' : '保存勾选' }}
@@ -316,8 +326,9 @@ onBeforeUnmount(() => {
     <div v-if="applyOpen" class="apply-mask" @click.self="applyOpen = false">
       <div class="apply-box">
         <template v-if="secondEditUsed">
-          <h3>查看二次编辑单</h3>
-          <p>请填写申请时的电话，核验通过后打开你的二次编辑报价单。</p>
+          <h3>{{ secondEditApproved ? '查看二次编辑单' : '二次编辑审核中' }}</h3>
+          <p v-if="secondEditApproved">请填写申请时的电话，核验通过后打开你的二次编辑报价单。</p>
+          <p v-else>申请已提交，后台通过后可用申请电话打开编辑。现在核验会提示尚未通过。</p>
           <label>申请人姓名<input v-model="applicant.name" placeholder="可选，更准确" /></label>
           <label>申请人电话<input v-model="applicant.phone" placeholder="必填" /></label>
           <div class="apply-actions">
@@ -329,7 +340,7 @@ onBeforeUnmount(() => {
         </template>
         <template v-else>
           <h3>二次编辑分享申请</h3>
-          <p>提交后将复制一份报价单供你修改，每个报价单只能申请一次。之后可用本分享链接加申请电话再次打开。</p>
+          <p>提交后需后台审核。通过后可用本分享链接加申请电话打开编辑，每个报价单只能申请一次。</p>
           <label>申请人姓名<input v-model="applicant.name" placeholder="必填" /></label>
           <label>申请人电话<input v-model="applicant.phone" placeholder="必填，回访时核验" /></label>
           <label>备注<input v-model="applicant.note" placeholder="可选" /></label>

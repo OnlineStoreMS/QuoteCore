@@ -3,6 +3,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  approveSecondEdit,
   copyQuote,
   deleteQuote,
   fetchDashboardStats,
@@ -106,6 +107,16 @@ async function onVoid(row: Quote) {
   }
 }
 
+async function onApprove(row: Quote) {
+  try {
+    await approveSecondEdit(row.id)
+    ElMessage.success('已通过二次编辑申请')
+    load()
+  } catch (e) {
+    ElMessage.error((e as Error).message)
+  }
+}
+
 async function onDelete(row: Quote) {
   await ElMessageBox.confirm(`确认删除报价单 ${row.quoteNo}？`, '提示', { type: 'warning' })
   try {
@@ -139,6 +150,7 @@ onMounted(async () => {
       </el-select>
       <el-select v-model="query.secondEdit" clearable placeholder="二次编辑" style="width: 140px" @change="query.page=1; load()">
         <el-option label="二次编辑申请" value="1" />
+        <el-option label="待审核" value="pending" />
       </el-select>
       <el-button type="primary" @click="query.page=1; load()">查询</el-button>
       <el-button type="success" @click="router.push('/quotes/new')">新建报价</el-button>
@@ -148,7 +160,7 @@ onMounted(async () => {
         type="warning"
         class="apply-tip"
         style="cursor:pointer"
-        @click="query.secondEdit='1'; query.page=1; load()"
+        @click="query.secondEdit='pending'; query.page=1; load()"
       >
         {{ applyCount }} 条二次编辑申请
       </el-tag>
@@ -159,7 +171,9 @@ onMounted(async () => {
       <el-table-column prop="title" label="标题" min-width="140">
         <template #default="{ row }">
           <div>{{ row.title }}</div>
-          <el-tag v-if="row.isSecondEdit" size="small" type="warning">二次编辑 · 原单 {{ row.originQuoteNo }}</el-tag>
+          <el-tag v-if="row.isSecondEdit" size="small" :type="row.secondEditApproved ? 'success' : 'warning'">
+            {{ row.secondEditApproved ? '二次编辑已通过' : '二次编辑待审核' }} · 原单 {{ row.originQuoteNo }}
+          </el-tag>
           <el-tag v-else-if="row.secondEditUsed" size="small" type="danger">二次编辑申请</el-tag>
         </template>
       </el-table-column>
@@ -179,9 +193,17 @@ onMounted(async () => {
         <template #default="{ row }">¥{{ Number(row.totalAmt || 0).toFixed(2) }}</template>
       </el-table-column>
       <el-table-column prop="updatedAt" label="更新时间" width="170" />
-      <el-table-column label="操作" width="260" fixed="right">
+      <el-table-column label="操作" width="300" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="router.push(`/quotes/${row.id}`)">编辑</el-button>
+          <el-button
+            v-if="row.isSecondEdit && !row.secondEditApproved"
+            link
+            type="success"
+            @click="onApprove(row)"
+          >
+            通过审核
+          </el-button>
           <el-button link type="primary" @click="onCopy(row)">复制</el-button>
           <el-button link type="warning" :disabled="row.status === 4" @click="onVoid(row)">作废</el-button>
           <el-button link type="danger" @click="onDelete(row)">删除</el-button>

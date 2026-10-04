@@ -97,6 +97,8 @@ export interface Quote {
   secondEditApplicantPhone?: string
   secondEditApplicantNote?: string
   secondEditAppliedAt?: string | null
+  secondEditApproved?: boolean
+  secondEditApprovedAt?: string | null
   items?: QuoteItem[]
   createdAt?: string
   updatedAt?: string
@@ -172,6 +174,10 @@ export function listQuotes(params: {
 
 export function getSecondEditQuote(id: number) {
   return client.get(`/quotes/${id}/second-edit`).then((r) => unwrap<Quote>(r))
+}
+
+export function approveSecondEdit(id: number) {
+  return client.post(`/quotes/${id}/second-edit/approve`).then((r) => unwrap<Quote>(r))
 }
 
 export function getQuote(id: number) {

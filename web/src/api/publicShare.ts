@@ -97,6 +97,7 @@ export interface CustomerShareQuote {
   pricedSaved?: boolean
   pricedFlags?: boolean[]
   secondEditUsed?: boolean
+  secondEditApproved?: boolean
   isSecondEdit?: boolean
   template: CustomerShareTemplate
   items: CustomerShareItem[]

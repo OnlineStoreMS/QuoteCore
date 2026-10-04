@@ -252,6 +252,20 @@ func (h *Handlers) EnsureCustomerShare(c *gin.Context) {
 	})
 }
 
+func (h *Handlers) ApproveSecondEdit(c *gin.Context) {
+	id, err := httputil.ParseID(c)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	item, err := h.svc.ApproveSecondEdit(authcontext.TenantID(c), id)
+	if err != nil {
+		h.mapError(c, err)
+		return
+	}
+	response.OK(c, item)
+}
+
 func (h *Handlers) GetSecondEdit(c *gin.Context) {
 	id, err := httputil.ParseID(c)
 	if err != nil {

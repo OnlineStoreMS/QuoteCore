@@ -100,6 +100,8 @@ type Quote struct {
 	SecondEditApplicantPhone string         `gorm:"size:32" json:"secondEditApplicantPhone"`
 	SecondEditApplicantNote  string         `gorm:"size:512" json:"secondEditApplicantNote"`
 	SecondEditAppliedAt      *time.Time     `json:"secondEditAppliedAt"`
+	SecondEditApproved       bool           `gorm:"not null;default:false" json:"secondEditApproved"`
+	SecondEditApprovedAt     *time.Time     `json:"secondEditApprovedAt"`
 	CreatedBy                uint64         `gorm:"not null;default:0" json:"createdBy"`
 	CreatedAt                time.Time      `json:"createdAt"`
 	UpdatedAt                time.Time      `json:"updatedAt"`
